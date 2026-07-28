@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "MOSI",
+    "slug": "onehealth-manitoba-demo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "onehealthmanitoba",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#2D6A4F"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "MOSI uses your location to detect your Manitoba region and show nearby alerts.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "MOSI uses background location to warn you when last-synced advisories may still affect your area while you travel."
+      }
+    },
+    "android": {
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "MOSI uses your location to detect your Manitoba region and show nearby alerts.",
+          "locationAlwaysAndWhenInUsePermission": "MOSI uses background location to warn you when last-synced advisories may still affect your area while you travel.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "expo-notifications",
+      "expo-splash-screen"
+    ],
+    "extra": {
+      "defaultSeed": "onehealth-manitoba-v1"
+    }
+  }
+}
