@@ -1,24 +1,37 @@
-﻿import { API_URLS, STORAGE_KEYS } from '../constants/config';
+import { API_URLS, STORAGE_KEYS } from '../constants/config';
 import { STRINGS } from '../constants/strings';
 import { AlertDetail, CategoryAlert, ManitobaRegion, RegionId, RiskLevel } from '../types/alerts';
 import { fetchJson, withCacheFallback } from './serviceUtils';
-import { getDistanceKm, getRegionFromCoordinates } from './locationService';
+import { getDistanceKm, getRegionById, getRegionFromCoordinates } from './locationService';
 
+// CWFIF national active fires (replaced the retired CWFIS `activefires_current` layer in 2026).
 type FireFeatureCollection = {
   features: Array<{
     properties: {
-      firename?: string;
-      hectares?: number;
-      lat?: number;
-      lon?: number;
+      agency_code?: string;
+      agency_fire_id?: string;
+      national_fire_id?: string;
+      fire_size?: number;
+      stage_of_control_status?: string;
+      situation_report_date?: string;
+      latitude?: number;
+      longitude?: number;
     };
   }>;
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  OC: 'out of control',
+  BH: 'being held',
+  UC: 'under control',
 };
 
 type ActiveFire = {
   id: string;
   name: string;
   hectares: number;
+  stage: string | null;
+  reportedAt: string | null;
   latitude: number;
   longitude: number;
   nearestRegionId: RegionId;
@@ -62,17 +75,19 @@ function buildWildfireDetail(fire: ActiveFire): AlertDetail {
     id: fire.id,
     category: 'wildfire',
     title: fire.name,
-    summary: `${Math.round(fire.nearestRegionDistanceKm)} km from ${fire.nearestRegionId}`,
-    description: `${fire.name} is an active wildfire with an estimated size of ${Math.round(
-      fire.hectares,
-    )} hectares. Smoke conditions can change quickly with wind and fire behaviour.`,
+    summary: `${Math.round(fire.hectares).toLocaleString('en-CA')} ha${fire.stage ? `, ${fire.stage}` : ''}, about ${Math.round(
+      fire.nearestRegionDistanceKm,
+    )} km from ${getRegionById(fire.nearestRegionId).label}`,
+    description: `${fire.name} is an active wildfire of about ${Math.round(fire.hectares).toLocaleString('en-CA')} hectares${
+      fire.stage ? ` and is currently ${fire.stage}` : ''
+    }. Smoke conditions can change quickly with wind and fire behaviour.`,
     source: STRINGS.wildfireSource,
-    sourceUrl: API_URLS.wildfire,
+    sourceUrl: 'https://cwfis.cfs.nrcan.gc.ca/interactive-map',
     authority: 'Canadian Wildland Fire Information System',
-    geographicScope: `Nearest Manitoba region: ${fire.nearestRegionId}`,
+    geographicScope: `Nearest Manitoba region: ${getRegionById(fire.nearestRegionId).label}`,
     riskLevel,
-    issuedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    issuedAt: fire.reportedAt ?? new Date().toISOString(),
+    updatedAt: fire.reportedAt ?? new Date().toISOString(),
     coordinates: { latitude: fire.latitude, longitude: fire.longitude },
     regionIds: [fire.nearestRegionId],
     recommendedActions: [
@@ -90,12 +105,19 @@ export async function fetchWildfireAlerts(regions: ManitobaRegion[]) {
   const { data } = await withCacheFallback<WildfireServiceResult>('wildfire', cacheKey, async () => {
     const response = await fetchJson<FireFeatureCollection>(API_URLS.wildfire);
     const fires = response.features
-      .map((feature, index) => ({
-        name: feature.properties.firename ?? `Active fire ${index + 1}`,
-        hectares: feature.properties.hectares ?? 0,
-        latitude: feature.properties.lat ?? 0,
-        longitude: feature.properties.lon ?? 0,
-      }))
+      .filter((feature) => feature.properties.stage_of_control_status !== 'OUT')
+      .map((feature, index) => {
+        const props = feature.properties;
+        const agency = props.agency_code ?? '';
+        return {
+          name: props.agency_fire_id ? `${agency} fire ${props.agency_fire_id}`.trim() : `Active fire ${index + 1}`,
+          hectares: Number(props.fire_size) || 0,
+          stage: STAGE_LABELS[props.stage_of_control_status ?? ''] ?? null,
+          reportedAt: props.situation_report_date ?? null,
+          latitude: Number(props.latitude) || 0,
+          longitude: Number(props.longitude) || 0,
+        };
+      })
       .filter((fire) => fire.latitude && fire.longitude)
       .map<ActiveFire>((fire, index) => {
         const nearestRegion = [...regions]
@@ -132,7 +154,7 @@ export async function fetchWildfireAlerts(regions: ManitobaRegion[]) {
           ? `${nearby.length} fire(s) within 500 km, nearest ${Math.round(nearest.distanceKm)} km away`
           : 'No active fires within 500 km',
         source: STRINGS.wildfireSource,
-        sourceUrl: API_URLS.wildfire,
+        sourceUrl: 'https://cwfis.cfs.nrcan.gc.ca/interactive-map',
         lastUpdated: new Date().toISOString(),
         details: nearest ? [`Nearest fire: ${nearest.name}`, `${Math.round(nearest.hectares)} hectares`] : [],
         dataStatus: 'live',

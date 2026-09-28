@@ -1,10 +1,10 @@
-﻿import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { Text } from '../components/ui/Text';
 import MapView, { Circle, Marker, Polygon, type LatLng } from 'react-native-maps';
 import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeInUp, FadeOut, FadeOutDown } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { CATEGORY_META, MANITOBA_MAP_REGION, MANITOBA_REGIONS } from '../constants/config';
@@ -29,6 +29,7 @@ import { calculateSafetyIndex } from '../services/safetyIndex';
 import { waterAreaIntersectsPolygon } from '../services/waterAdvisoryService';
 import { useAppStore } from '../state/useAppStore';
 import { useAppTheme } from '../theme';
+import { DARK_MAP_STYLE, LIGHT_MAP_STYLE } from '../theme/mapStyles';
 import { AlertDetail, BeachMonitoringPoint, CategoryAlert, HydroOutage, MbReadyAlert, RegionCoordinate, RegionId, RegionSnapshot, RiskLevel } from '../types/alerts';
 import { formatRiskLevel } from '../utils/format';
 import { getRiskColor, normalizeMosiScore, toDisplayedMosiScore } from '../utils/risk';
@@ -63,8 +64,8 @@ const MB_READY_HIGH_MARKER = '#EA580C';
 const HYDRO_FILL = 'rgba(202, 138, 4, 0.14)';
 const HYDRO_STROKE = 'rgba(202, 138, 4, 0.68)';
 const HYDRO_MARKER = '#CA8A04';
-const MAP_MODAL_ENTER = FadeInUp.duration(220);
-const MAP_MODAL_EXIT = FadeOutDown.duration(180);
+const MAP_MODAL_ENTER = FadeIn.duration(200);
+const MAP_MODAL_EXIT = FadeOut.duration(150);
 const MAP_MODAL_BACKDROP_ENTER = FadeIn.duration(180);
 const MAP_MODAL_BACKDROP_EXIT = FadeOut.duration(160);
 
@@ -222,7 +223,7 @@ function MiniScoreRing({ riskLevel, score }: { riskLevel: RiskLevel; score: numb
         <Text selectable style={{ ...theme.typography.title, color: theme.colors.text }}>
           {scoreLabel}
         </Text>
-        <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 10 }}>
+        <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 11 }}>
           / 3
         </Text>
       </View>
@@ -638,20 +639,20 @@ function MbReadyDetailCard({
         <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
           {effectiveLabel ? (
             <View style={{ flex: 1 }}>
-              <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft, fontSize: 10, textTransform: 'uppercase' }}>Effective</Text>
+              <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft, fontSize: 11, textTransform: 'uppercase' }}>Effective</Text>
               <Text selectable style={{ ...theme.typography.caption, color: theme.colors.text }}>{effectiveLabel}</Text>
             </View>
           ) : null}
           {expiresLabel ? (
             <View style={{ flex: 1 }}>
-              <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft, fontSize: 10, textTransform: 'uppercase' }}>Expires</Text>
+              <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft, fontSize: 11, textTransform: 'uppercase' }}>Expires</Text>
               <Text selectable style={{ ...theme.typography.caption, color: theme.colors.text }}>{expiresLabel}</Text>
             </View>
           ) : null}
         </View>
       ) : null}
 
-      <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 10 }}>
+      <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 11 }}>
         MB Ready / NAAD Emergency Alert System
       </Text>
     </Animated.View>
@@ -735,7 +736,7 @@ function HydroDetailCard({
           ))}
       </View>
 
-      <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 10 }}>
+      <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 11 }}>
         Source: Manitoba Hydro: updated every 5 min
       </Text>
     </Animated.View>
@@ -745,7 +746,6 @@ function HydroDetailCard({
 export function MapScreen() {
   const theme = useAppTheme();
   const insets = useSafeAreaInsets();
-  const tabBarHeight = useBottomTabBarHeight();
   const { height: windowHeight } = useWindowDimensions();
   const snapshots = useAppStore((state) => state.snapshots);
   const selectedAreaSnapshot = useAppStore((state) => state.selectedAreaSnapshot);
@@ -786,12 +786,13 @@ export function MapScreen() {
     ? MANITOBA_SUB_REGIONS.find((zone) => zone.id === selectedZoneId) ?? null
     : null;
   const zoneModalHeight = Math.min(windowHeight * 0.56, 480);
-  const zoneModalBottom = tabBarHeight + insets.bottom + theme.spacing.sm;
+  // The tab scene already ends above the tab bar, so offsets are measured from the scene bottom.
+  const zoneModalBottom = theme.spacing.sm;
   const isZoneModalVisible = isZonePreviewVisible && Boolean(selectedZone);
   const floatingOverlayBottom = isZoneModalVisible
     ? zoneModalBottom + zoneModalHeight + theme.spacing.md
-    : tabBarHeight + insets.bottom + theme.spacing.md;
-  const floatingCardBottom = tabBarHeight + insets.bottom + theme.spacing.md;
+    : theme.spacing.md;
+  const floatingCardBottom = theme.spacing.md;
   const floatingLegendTop = insets.top + theme.spacing.sm;
 
   const waterMapAlerts = useMemo(
@@ -1596,7 +1597,7 @@ export function MapScreen() {
         justifyContent: 'flex-end',
         paddingHorizontal: theme.spacing.md,
         paddingBottom: zoneModalBottom,
-        backgroundColor: 'rgba(7, 10, 20, 0.14)',
+        backgroundColor: theme.colors.scrim,
       }}
     >
       <Pressable
@@ -1659,6 +1660,8 @@ export function MapScreen() {
         showsMyLocationButton={false}
         showsUserLocation={Boolean(userCoordinates)}
         toolbarEnabled={false}
+        customMapStyle={theme.isDark ? DARK_MAP_STYLE : LIGHT_MAP_STYLE}
+        userInterfaceStyle={theme.isDark ? 'dark' : 'light'}
         onPress={handleMapPress}
       >
         {}
@@ -1718,7 +1721,7 @@ export function MapScreen() {
               >
                 <Text
                   style={{
-                    fontSize: 9,
+                    fontSize: 11,
                     fontWeight: '600',
                     color: '#FFFFFF',
                   }}
@@ -1789,7 +1792,7 @@ export function MapScreen() {
               <Text selectable style={{ fontSize: 12, fontWeight: '700', color: theme.colors.text }}>
                 Map Legend
               </Text>
-              <Text selectable style={{ fontSize: 10, color: theme.colors.textMuted }}>
+              <Text selectable style={{ fontSize: 11, color: theme.colors.textMuted }}>
                 {isLegendExpanded ? 'Tap to collapse' : 'Tap to view symbols'}
               </Text>
             </View>
@@ -1816,7 +1819,7 @@ export function MapScreen() {
             >
               {}
               <View style={{ paddingHorizontal: theme.spacing.md, paddingVertical: 8, gap: 6 }}>
-                <Text style={{ fontSize: 9, fontWeight: '700', letterSpacing: 0.8, color: theme.colors.textSoft, textTransform: 'uppercase' }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.8, color: theme.colors.textSoft, textTransform: 'uppercase' }}>
                   Zone risk
                 </Text>
                 <View style={{ flexDirection: 'row', gap: 12 }}>

@@ -1,22 +1,26 @@
 import React, { useEffect, useState } from 'react';
-import { AppState, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { AppState, Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
-import Animated, { FadeInDown, FadeInRight } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { SafetyScoreCard } from '../components/SafetyScoreCard';
+import { CategoryDetailSheet } from '../components/CategoryDetailSheet';
 import { SnapshotTile } from '../components/SnapshotTile';
-import { CATEGORY_META } from '../constants/config';
+import { TactileButton } from '../components/ui/TactileButton';
+import { Text } from '../components/ui/Text';
 import { useAppStore } from '../state/useAppStore';
 import { useAppTheme } from '../theme';
-import { CategoryAlert, CategoryId } from '../types/alerts';
+import { CategoryId } from '../types/alerts';
 import { formatRelativeMinutes } from '../utils/format';
-import { getRiskColor } from '../utils/risk';
+import { tapHaptic } from '../utils/haptics';
 
 const categoryOrder: CategoryId[] = ['weather', 'airQuality', 'wildfire', 'water', 'vectorBorne', 'healthAdvisories'];
 const DASHBOARD_AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DASHBOARD_TIMESTAMP_TICK_MS = 60 * 1000;
+const PLACEHOLDER_SOURCE = 'Waiting for first sync';
 
 function shouldAutoRefreshDashboard(fetchedAt?: string | null) {
   if (!fetchedAt) {
@@ -31,107 +35,38 @@ function shouldAutoRefreshDashboard(fetchedAt?: string | null) {
   return Date.now() - fetchedAtMs >= DASHBOARD_AUTO_REFRESH_INTERVAL_MS;
 }
 
-function getLiveValue(category: CategoryId, alert: CategoryAlert): string {
-  const value = alert.value;
-
-  switch (category) {
-    case 'weather': {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return `${Math.round(value)}C`;
-      }
-
-      const match = alert.summary.match(/-?\d+/);
-      return match ? `${match[0]}C` : '--';
-    }
-    case 'airQuality': {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return value.toFixed(1);
-      }
-
-      if (typeof value === 'string' && value !== 'n/a') {
-        const parsed = parseFloat(value);
-        if (Number.isFinite(parsed)) {
-          return parsed.toFixed(1);
-        }
-      }
-
-      return '--';
-    }
-    case 'wildfire': {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return Math.round(value).toString();
-      }
-
-      return '0';
-    }
-    case 'water': {
-      if (alert.riskLevel === 'low') {
-        return '0';
-      }
-
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return Math.round(value).toString();
-      }
-
-      return '0';
-    }
-    case 'vectorBorne': {
-      if (alert.riskLevel === 'high') return 'Active';
-      if (alert.riskLevel === 'moderate') return 'Building';
-      return 'Low';
-    }
-    case 'healthAdvisories': {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return Math.round(value).toString();
-      }
-
-      return '0';
-    }
-    default:
-      return '--';
-  }
-}
-
-function getLiveLabel(category: CategoryId): string {
-  switch (category) {
-    case 'weather':
-      return 'C';
-    case 'airQuality':
-      return 'AQHI';
-    case 'wildfire':
-      return 'fires';
-    case 'water':
-      return 'advisories';
-    case 'vectorBorne':
-      return 'season';
-    case 'healthAdvisories':
-      return 'bulletins';
-    default:
-      return '';
-  }
-}
-
 export function OverviewScreen() {
   const isFocused = useIsFocused();
   const theme = useAppTheme();
-  const { colors: c, spacing: sp, typography: ty, radii, shadows } = theme;
+  const { colors: c, spacing: sp, typography: ty, radii } = theme;
+  const insets = useSafeAreaInsets();
 
   const regionId = useAppStore((state) => state.selectedRegionId);
   const snapshots = useAppStore((state) => state.snapshots);
   const isRefreshing = useAppStore((state) => state.isRefreshing);
   const isOffline = useAppStore((state) => state.isOffline);
   const isRegionSwitching = useAppStore((state) => state.isRegionSwitching);
+  const isOutsideManitoba = useAppStore((state) => state.isOutsideManitoba);
+  const isInitialized = useAppStore((state) => state.isInitialized);
   const locationSource = useAppStore((state) => state.locationSource);
   const activeSubRegionLabel = useAppStore((state) => state.activeSubRegionLabel);
   const selectedAreaSnapshot = useAppStore((state) => state.selectedAreaSnapshot);
   const refreshAll = useAppStore((state) => state.refreshAll);
+  const openRegionPicker = useAppStore((state) => state.openRegionPicker);
   const snapshot = selectedAreaSnapshot ?? snapshots[regionId];
-  const [expandedCategory, setExpandedCategory] = useState<CategoryId | null>(null);
+  const [detailCategory, setDetailCategory] = useState<CategoryId | null>(null);
   const [currentTimeMs, setCurrentTimeMs] = useState(() => Date.now());
-  const showSkeleton = isRefreshing || isRegionSwitching;
 
-  const locationLabel =
-    locationSource === 'gps' && activeSubRegionLabel ? activeSubRegionLabel : snapshot.region.label;
+  // Only block the page on the very first sync or an area switch; routine refreshes
+  // keep the current numbers on screen and use the pull-to-refresh spinner instead.
+  // Placeholder snapshots exist before the first sync; never present their numbers as a real score.
+  const hasData = snapshot.alerts.weather.source !== PLACEHOLDER_SOURCE;
+  const showSkeleton = isRegionSwitching || (!hasData && (isRefreshing || !isInitialized));
+  const showNoData = !hasData && !showSkeleton;
+  const locationLabel = activeSubRegionLabel ?? snapshot.region.label;
+  const todayLabel = new Intl.DateTimeFormat('en-CA', { weekday: 'long', month: 'long', day: 'numeric' }).format(
+    currentTimeMs,
+  );
 
   useEffect(() => {
     if (!isFocused) {
@@ -158,7 +93,7 @@ export function OverviewScreen() {
       const state = useAppStore.getState();
       const activeSnapshot = state.selectedAreaSnapshot ?? state.snapshots[state.selectedRegionId];
 
-      if (!activeSnapshot || state.isRefreshing || state.isRegionSwitching) {
+      if (!activeSnapshot || state.isRefreshing || state.isRegionSwitching || !state.isInitialized) {
         return;
       }
 
@@ -174,7 +109,7 @@ export function OverviewScreen() {
     const intervalId = setInterval(() => {
       const state = useAppStore.getState();
 
-      if (state.isRefreshing || state.isRegionSwitching) {
+      if (state.isRefreshing || state.isRegionSwitching || !state.isInitialized) {
         return;
       }
 
@@ -195,185 +130,162 @@ export function OverviewScreen() {
 
   return (
     <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{ paddingBottom: 120 }}
+      contentContainerStyle={{
+        paddingTop: insets.top + sp.sm,
+        paddingHorizontal: sp.md,
+        paddingBottom: sp.xxl,
+        gap: sp.lg,
+      }}
       showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={refreshAll} tintColor={c.primary} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing && !showSkeleton}
+          onRefresh={refreshAll}
+          tintColor={c.primary}
+          colors={[c.primary]}
+          progressBackgroundColor={c.card}
+        />
+      }
     >
-      <View
-        style={{
-          paddingHorizontal: sp.md,
-          paddingTop: sp.lg,
-          paddingBottom: sp.sm,
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <View
-          style={{
+      <View style={{ gap: 4 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: sp.sm }}>
+          <Text style={{ ...ty.caption, color: c.textMuted }}>{todayLabel}</Text>
+          <Text style={{ ...ty.caption, color: c.textSoft }}>
+            {hasData ? `Updated ${formatRelativeMinutes(snapshot.fetchedAt, currentTimeMs)}` : 'Syncing…'}
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Current area: ${locationLabel}`}
+          accessibilityHint="Opens the area picker"
+          onPress={() => {
+            tapHaptic();
+            openRegionPicker();
+          }}
+          hitSlop={6}
+          style={({ pressed }) => ({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 6,
-            backgroundColor: c.cardSecondary,
-            borderRadius: radii.pill,
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-          }}
+            alignSelf: 'flex-start',
+            maxWidth: '100%',
+            opacity: pressed ? 0.6 : 1,
+          })}
         >
           <MaterialCommunityIcons
-            name={locationSource === 'gps' ? 'crosshairs-gps' : 'map-marker-outline'}
-            size={13}
+            name={locationSource === 'gps' ? 'navigation-variant' : 'map-marker'}
+            size={22}
             color={c.primary}
           />
-          <Text style={{ ...ty.caption, color: c.text, fontWeight: '700' }}>{locationLabel}</Text>
-          {locationSource === 'gps' && activeSubRegionLabel ? (
-            <Text style={{ ...ty.caption, color: c.textMuted }}> / {snapshot.region.label}</Text>
-          ) : null}
-        </View>
-        <Text style={{ ...ty.caption, color: c.textMuted }}>
-          {formatRelativeMinutes(snapshot.fetchedAt, currentTimeMs)}
-        </Text>
+          <Text style={{ ...ty.heading, fontSize: 26, lineHeight: 31, color: c.text, flexShrink: 1 }} numberOfLines={1}>
+            {locationLabel}
+          </Text>
+          <MaterialCommunityIcons name="chevron-down" size={22} color={c.textMuted} />
+        </Pressable>
       </View>
 
-      <View style={{ paddingHorizontal: sp.md, gap: sp.lg }}>
-        {isOffline ? (
-          <View style={{ backgroundColor: c.highSoft, borderRadius: radii.lg, padding: sp.md }}>
-            <Text style={{ ...ty.body, color: c.riskHigh }}>
-              Live sources unavailable. Showing cached data.
-            </Text>
-          </View>
-        ) : null}
+      {isOffline && hasData ? (
+        <Banner
+          icon="cloud-off-outline"
+          tone="high"
+          text="Couldn't reach live sources. Showing the last data saved on this phone."
+        />
+      ) : null}
+      {isOutsideManitoba ? (
+        <Banner
+          icon="map-marker-question-outline"
+          tone="info"
+          text="You appear to be outside Manitoba, so MOSI is showing the area you picked."
+        />
+      ) : null}
 
-        {showSkeleton ? (
+      {showNoData ? (
+        <Animated.View entering={FadeIn.duration(200)} style={{ alignItems: 'center', gap: sp.md, paddingVertical: sp.xxl }}>
+          <MaterialCommunityIcons name="cloud-off-outline" size={48} color={c.textSoft} />
+          <Text style={{ ...ty.heading, color: c.text, textAlign: 'center' }}>No data yet</Text>
+          <Text style={{ ...ty.body, color: c.textMuted, textAlign: 'center', maxWidth: 300 }}>
+            MOSI couldn't reach its data sources. Check your connection and try again.
+          </Text>
+          <TactileButton label="Try again" icon="refresh" loading={isRefreshing} onPress={() => void refreshAll()} />
+        </Animated.View>
+      ) : showSkeleton ? (
+        <View style={{ gap: sp.md }}>
+          <LoadingSkeleton height={300} radius={radii.xl} />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: sp.sm }}>
+            {categoryOrder.map((category) => (
+              <LoadingSkeleton key={category} height={138} width="48%" radius={radii.lg} />
+            ))}
+          </View>
+        </View>
+      ) : (
+        <Animated.View entering={FadeIn.duration(200)} style={{ gap: sp.lg }}>
+          <SafetyScoreCard
+            riskLevel={snapshot.safetyIndex.overallRisk}
+            score={snapshot.safetyIndex.overallScore}
+            regionLabel={locationLabel}
+            breakdown={snapshot.safetyIndex.breakdown}
+          />
+
           <View style={{ gap: sp.sm }}>
-            <LoadingSkeleton height={312} radius={28} />
-            <View style={{ flexDirection: 'row', gap: sp.sm }}>
-              {categoryOrder.slice(0, 4).map((category) => (
-                <LoadingSkeleton key={category} height={90} width={80} radius={radii.lg} />
-              ))}
+            <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <Text accessibilityRole="header" style={{ ...ty.title, fontSize: 19, color: c.text }}>
+                What's in the score
+              </Text>
+              <Text style={{ ...ty.caption, color: c.textSoft }}>Tap for details</Text>
             </View>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: sp.sm }}>
               {categoryOrder.map((category) => (
-                <LoadingSkeleton key={category} height={160} width="48%" radius={radii.lg} />
+                <SnapshotTile
+                  key={category}
+                  category={category}
+                  alert={snapshot.alerts[category]}
+                  onPress={() => setDetailCategory(category)}
+                />
               ))}
             </View>
           </View>
-        ) : (
-          <Animated.View entering={FadeInDown.duration(280)} style={{ gap: sp.xl }}>
-            <SafetyScoreCard
-              riskLevel={snapshot.safetyIndex.overallRisk}
-              score={snapshot.safetyIndex.overallScore}
-              regionLabel={snapshot.region.label}
-              breakdown={snapshot.safetyIndex.breakdown}
-            />
 
-            <View style={{ gap: sp.sm }}>
-              <Text
-                style={{
-                  ...ty.sectionLabel,
-                  color: c.textSoft,
-                  letterSpacing: 1,
-                  textTransform: 'uppercase',
-                  fontSize: 10,
-                  fontWeight: '700',
-                }}
-              >
-                Live Conditions
-              </Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: sp.sm }}
-              >
-                {categoryOrder.map((category, index) => {
-                  const alert = snapshot.alerts[category];
-                  const accent = getRiskColor(alert.riskLevel, c);
-                  const value = getLiveValue(category, alert);
-                  const label = getLiveLabel(category);
+          <Text style={{ ...ty.caption, color: c.textSoft, textAlign: 'center', paddingHorizontal: sp.md }}>
+            Built from public data by ECCC, the Province of Manitoba and others. MOSI is not an official alert
+            service. In an emergency, call 911.
+          </Text>
+        </Animated.View>
+      )}
 
-                  return (
-                    <Animated.View
-                      key={category}
-                      entering={FadeInRight.duration(300).delay(index * 55)}
-                      style={{
-                        backgroundColor: c.card,
-                        borderRadius: radii.lg,
-                        paddingHorizontal: sp.md,
-                        paddingVertical: sp.md,
-                        alignItems: 'center',
-                        gap: 5,
-                        minWidth: 82,
-                        boxShadow: shadows.card,
-                        borderTopWidth: 3,
-                        borderTopColor: accent,
-                      }}
-                    >
-                      <MaterialCommunityIcons
-                        name={CATEGORY_META[category].icon as never}
-                        size={22}
-                        color={accent}
-                      />
-                      <Text
-                        style={{
-                          fontSize: 20,
-                          fontWeight: '800',
-                          color: c.text,
-                          lineHeight: 24,
-                          letterSpacing: -0.5,
-                        }}
-                      >
-                        {value}
-                      </Text>
-                      <Text style={{ ...ty.caption, color: c.textMuted, textAlign: 'center', fontSize: 10 }}>
-                        {label}
-                      </Text>
-                      <View
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: 4,
-                          backgroundColor: accent,
-                          marginTop: 1,
-                        }}
-                      />
-                    </Animated.View>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            <View style={{ gap: sp.sm }}>
-              <Text
-                style={{
-                  ...ty.sectionLabel,
-                  color: c.textSoft,
-                  letterSpacing: 1,
-                  textTransform: 'uppercase',
-                  fontSize: 10,
-                  fontWeight: '700',
-                }}
-              >
-                Category Breakdown
-              </Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: sp.sm }}>
-                {categoryOrder.map((category, categoryIndex) => (
-                  <SnapshotTile
-                    key={category}
-                    category={category}
-                    alert={snapshot.alerts[category]}
-                    expanded={expandedCategory === category}
-                    index={categoryIndex}
-                    onPress={() => {
-                      setExpandedCategory((current) => (current === category ? null : category));
-                    }}
-                  />
-                ))}
-              </View>
-            </View>
-          </Animated.View>
-        )}
-      </View>
+      <CategoryDetailSheet
+        category={detailCategory}
+        alert={detailCategory ? snapshot.alerts[detailCategory] : null}
+        onClose={() => setDetailCategory(null)}
+      />
     </ScrollView>
+  );
+}
+
+function Banner({
+  icon,
+  text,
+  tone,
+}: {
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  text: string;
+  tone: 'high' | 'info';
+}) {
+  const { colors: c, spacing: sp, typography: ty, radii } = useAppTheme();
+
+  return (
+    <View
+      accessibilityRole="alert"
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: sp.sm,
+        padding: sp.md,
+        borderRadius: radii.lg,
+        backgroundColor: tone === 'high' ? c.highSoft : c.infoSoft,
+      }}
+    >
+      <MaterialCommunityIcons name={icon} size={20} color={tone === 'high' ? c.riskHigh : c.accent} />
+      <Text style={{ ...ty.body, color: c.text, flex: 1 }}>{text}</Text>
+    </View>
   );
 }

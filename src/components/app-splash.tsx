@@ -1,40 +1,35 @@
 import React from 'react';
-import { Text, View } from 'react-native';
-import Animated, { FadeOut } from 'react-native-reanimated';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { View } from 'react-native';
+import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
-import { STRINGS } from '../constants/strings';
 import { useAppTheme } from '../theme';
+import { BrandMark } from './ui/BrandMark';
+import { Text } from './ui/Text';
 
 export function AppSplash() {
   const theme = useAppTheme();
 
   return (
     <Animated.View
-      exiting={FadeOut.duration(500)}
+      exiting={FadeOut.duration(380)}
       style={{
         position: 'absolute',
         inset: 0,
-        backgroundColor: theme.colors.primary,
+        backgroundColor: theme.colors.background,
         alignItems: 'center',
         justifyContent: 'center',
         gap: theme.spacing.md,
       }}
     >
-      <View
-        style={{
-          width: 84,
-          height: 84,
-          borderRadius: 28,
-          backgroundColor: 'rgba(255,255,255,0.14)',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        <MaterialCommunityIcons name="shield-check" size={42} color={theme.colors.textOnPrimary} />
+      <Animated.View entering={FadeIn.duration(250)}>
+        <BrandMark size={96} />
+      </Animated.View>
+      <View style={{ alignItems: 'center', gap: 2 }}>
+        <Text style={{ ...theme.typography.display, color: theme.colors.text }}>MOSI</Text>
+        <Text style={{ ...theme.typography.caption, color: theme.colors.textMuted }}>
+          Manitoba Outdoor Safety Index
+        </Text>
       </View>
-      <Text style={{ ...theme.typography.display, color: theme.colors.textOnPrimary }}>MOSI</Text>
-      <Text style={{ ...theme.typography.body, color: 'rgba(255,255,255,0.78)' }}>{STRINGS.appTagline}</Text>
     </Animated.View>
   );
 }

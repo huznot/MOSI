@@ -39,8 +39,8 @@ export async function fetchOpenMeteoForecast(target: ForecastTarget): Promise<Op
   try {
     const url =
       `${API_URLS.openMeteo}` +
-      `?latitude=${target.latitude}` +
-      `&longitude=${target.longitude}` +
+      `?latitude=${target.latitude.toFixed(2)}` +
+      `&longitude=${target.longitude.toFixed(2)}` +
       `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,uv_index_max,weathercode,cloudcover_mean` +
       `&timezone=America%2FWinnipeg` +
       `&forecast_days=7`;

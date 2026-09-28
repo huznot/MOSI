@@ -1,5 +1,6 @@
 import React from 'react';
-import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { Linking, ScrollView, View } from 'react-native';
+import { Text } from '../components/ui/Text';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -7,6 +8,8 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import { formatDistanceKm, formatLastUpdated, formatRiskLevel } from '../utils/format';
 import { getRiskColor } from '../utils/risk';
 import { useAppTheme } from '../theme';
+import { SAFETY_NOTICE } from '../constants/legal';
+import { TactileButton } from '../components/ui/TactileButton';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'AlertDetail'>;
 
@@ -32,6 +35,8 @@ export function AlertDetailScreen({ route }: Props) {
           padding: theme.spacing.lg,
           gap: theme.spacing.sm,
           boxShadow: theme.shadows.card,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
         }}
       >
         <View
@@ -69,6 +74,8 @@ export function AlertDetailScreen({ route }: Props) {
           padding: theme.spacing.lg,
           gap: theme.spacing.sm,
           boxShadow: theme.shadows.card,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
         }}
       >
         <Text selectable style={{ ...theme.typography.sectionLabel, color: theme.colors.textSoft }}>
@@ -118,6 +125,8 @@ export function AlertDetailScreen({ route }: Props) {
           padding: theme.spacing.lg,
           gap: theme.spacing.sm,
           boxShadow: theme.shadows.card,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
         }}
       >
         <Text selectable style={{ ...theme.typography.sectionLabel, color: theme.colors.textSoft }}>
@@ -137,6 +146,8 @@ export function AlertDetailScreen({ route }: Props) {
             padding: theme.spacing.lg,
             gap: theme.spacing.sm,
             boxShadow: theme.shadows.card,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
           }}
         >
           <Text selectable style={{ ...theme.typography.title, color: theme.colors.text }}>
@@ -170,25 +181,20 @@ export function AlertDetailScreen({ route }: Props) {
 
       {}
       {alert.sourceUrl ? (
-        <Pressable
+        <TactileButton
+          label="Read the official notice"
+          icon="open-in-new"
+          variant="secondary"
+          fullWidth
           onPress={() => {
-            void Linking.openURL(alert.sourceUrl!);
+            void Linking.openURL(alert.sourceUrl!).catch(() => undefined);
           }}
-          style={{
-            borderRadius: theme.radii.lg,
-            padding: theme.spacing.md,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: theme.spacing.sm,
-          }}
-        >
-          <MaterialCommunityIcons name="open-in-new" size={16} color={theme.colors.textMuted} />
-          <Text style={{ ...theme.typography.body, color: theme.colors.textMuted }}>View original source</Text>
-        </Pressable>
+        />
       ) : null}
+
+      <Text style={{ ...theme.typography.caption, color: theme.colors.textSoft, textAlign: 'center' }}>
+        {SAFETY_NOTICE}
+      </Text>
     </ScrollView>
   );
 }

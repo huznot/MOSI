@@ -1,7 +1,9 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, ScrollView } from 'react-native';
 
 import { useAppTheme } from '../theme';
+import { selectHaptic } from '../utils/haptics';
+import { Text } from './ui/Text';
 
 type ChipOption<T extends string | number> = {
   label: string;
@@ -12,44 +14,48 @@ type Props<T extends string | number> = {
   options: ChipOption<T>[];
   selected: T;
   onSelect: (value: T) => void;
-  dark?: boolean;
 };
 
-export function FilterChips<T extends string | number>({ options, selected, onSelect, dark = false }: Props<T>) {
-  const theme = useAppTheme();
+/** Single-line, horizontally scrolling filter chips. The active chip sits raised on a ledge. */
+export function FilterChips<T extends string | number>({ options, selected, onSelect }: Props<T>) {
+  const { colors: c, radii, spacing: sp } = useAppTheme();
 
   return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm }}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ gap: sp.xs, paddingBottom: 4, paddingHorizontal: sp.md }}
+      style={{ marginHorizontal: -sp.md }}
+    >
       {options.map((option) => {
         const active = option.value === selected;
         return (
           <Pressable
             key={`${option.value}`}
-            onPress={() => onSelect(option.value)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            onPress={() => {
+              if (!active) {
+                selectHaptic();
+                onSelect(option.value);
+              }
+            }}
             style={{
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-              borderRadius: theme.radii.pill,
-              backgroundColor: active
-                ? dark
-                  ? theme.colors.textOnPrimary
-                  : theme.colors.primary
-                : dark
-                  ? 'rgba(255,255,255,0.08)'
-                  : theme.colors.cardSecondary,
+              paddingHorizontal: 16,
+              minHeight: 38,
+              justifyContent: 'center',
+              borderRadius: radii.pill,
+              borderWidth: 1,
+              borderColor: active ? c.primary : c.border,
+              backgroundColor: active ? c.primary : c.card,
+              boxShadow: active ? `0 3px 0 ${c.primaryLedge}` : `0 2px 0 ${c.ledge}`,
             }}
           >
             <Text
-              selectable
               style={{
-                ...theme.typography.caption,
-                color: active
-                  ? dark
-                    ? theme.colors.primary
-                    : theme.colors.textOnPrimary
-                  : dark
-                    ? 'rgba(255,255,255,0.72)'
-                    : theme.colors.textMuted,
+                fontFamily: 'Body-700',
+                fontSize: 14,
+                color: active ? c.textOnPrimary : c.textMuted,
               }}
             >
               {option.label}
@@ -57,6 +63,6 @@ export function FilterChips<T extends string | number>({ options, selected, onSe
           </Pressable>
         );
       })}
-    </View>
+    </ScrollView>
   );
 }

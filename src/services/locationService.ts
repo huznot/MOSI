@@ -20,6 +20,7 @@ type DetectRegionResult = {
   permissionStatus: LocationPermissionState;
   region: ManitobaRegion;
   coordinates: UserCoordinates | null;
+  outsideManitoba: boolean;
 };
 
 const LOCAL_AREA_RADIUS_KM = {
@@ -303,21 +304,54 @@ export function buildSubRegionLabel(subRegion: SubRegion): string {
   return subRegion.name;
 }
 
-export async function detectUserRegion(): Promise<DetectRegionResult> {
+/**
+ * True when the point is in Manitoba. The bounding box catches lakes and border
+ * areas that the simplified health-region polygons leave out.
+ */
+export function isInManitoba(latitude: number, longitude: number) {
+  const inBounds = latitude >= 48.99 && latitude <= 60.01 && longitude >= -102.1 && longitude <= -88.9;
+  return inBounds || findRegionByCoordinates(latitude, longitude) !== null;
+}
+
+/**
+ * Resolves the user's region from GPS. Only shows the OS permission prompt when
+ * `prompt` is true, which is reserved for explicit user actions that follow the
+ * in-app location disclosure.
+ */
+export async function detectUserRegion({ prompt = false }: { prompt?: boolean } = {}): Promise<DetectRegionResult> {
+  const fallback = (permissionStatus: LocationPermissionState): DetectRegionResult => ({
+    permissionStatus,
+    region: getRegionById(DEFAULT_REGION_ID),
+    coordinates: null,
+    outsideManitoba: false,
+  });
+
   try {
-    const permission = await Location.requestForegroundPermissionsAsync();
+    const permission = prompt
+      ? await Location.requestForegroundPermissionsAsync()
+      : await Location.getForegroundPermissionsAsync();
 
     if (permission.status !== 'granted') {
-      return {
-        permissionStatus: permission.status,
-        region: getRegionById(DEFAULT_REGION_ID),
-        coordinates: null,
-      };
+      return fallback(permission.status);
     }
 
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Highest,
-    });
+    // A recent cached fix is instant and plenty for picking a region; a fresh fix can
+    // take several seconds indoors, so it is only a fallback and is capped.
+    const location =
+      (await Location.getLastKnownPositionAsync({ maxAge: 15 * 60 * 1000, requiredAccuracy: 5000 }).catch(() => null)) ??
+      (await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+      ])) ??
+      (await Location.getLastKnownPositionAsync().catch(() => null));
+
+    if (!location) {
+      return fallback('granted');
+    }
+
+    if (!isInManitoba(location.coords.latitude, location.coords.longitude)) {
+      return { ...fallback('granted'), outsideManitoba: true };
+    }
 
     const coordinates = {
       latitude: location.coords.latitude,
@@ -327,15 +361,12 @@ export async function detectUserRegion(): Promise<DetectRegionResult> {
     } satisfies UserCoordinates;
 
     return {
-      permissionStatus: permission.status,
+      permissionStatus: 'granted',
       region: getRegionFromCoordinates(location.coords.latitude, location.coords.longitude),
       coordinates,
+      outsideManitoba: false,
     };
   } catch {
-    return {
-      permissionStatus: 'denied',
-      region: getRegionById(DEFAULT_REGION_ID),
-      coordinates: null,
-    };
+    return fallback('denied');
   }
 }

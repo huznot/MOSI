@@ -66,3 +66,7 @@ validation/output/
 # large raw validation data (downloaded, not tracked)
 validation/raw/2024_hotspots.zip
 validation/raw/hotspots-2024/
+
+# Local publishing notes and tooling (not part of the app)
+store/PLAY_STORE.md
+skills-lock.json

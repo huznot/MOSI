@@ -285,8 +285,8 @@ async function fetchLocalizedSnapshot(
 
   try {
     const localLive = await fetchWeatherAndAirQualityForPoint(area.center.latitude, area.center.longitude);
-    weatherAlert = localLive.weatherAlert;
-    airAlert = localLive.airAlert;
+    weatherAlert = localLive.weatherAlert ?? weatherAlert;
+    airAlert = localLive.airAlert ?? airAlert;
   } catch {
   }
 

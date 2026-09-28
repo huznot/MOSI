@@ -32,12 +32,8 @@ import {
   getRegionById,
 } from '../services/locationService';
 import { MANITOBA_SUB_REGIONS, SubRegion } from '../data/manitobaSubRegions';
-import {
-  cacheOfflineAlertPayload,
-  primeOfflineLocationMonitor,
-  registerNotifications,
-} from '../services/notificationService';
-import { wait } from '../services/serviceUtils';
+import { enableRiskNotifications, setNotificationRegion } from '../services/notificationService';
+import { usePreferencesStore } from './usePreferencesStore';
 import {
   buildLocalAreaSnapshotPreview,
   buildZoneSnapshotPreview,
@@ -47,6 +43,8 @@ import {
 import { enrichWaterAdvisoryShapes, getWaterSiteIdentity } from '../services/waterAdvisoryService';
 
 type FilterValue = CategoryId | 'all';
+
+export type LocateResult = 'granted' | 'denied' | 'outside';
 
 type AppState = {
   isHydrated: boolean;
@@ -60,6 +58,7 @@ type AppState = {
   userCoordinates: UserCoordinates | null;
   hasCompletedOnboarding: boolean;
   showRegionPicker: boolean;
+  isOutsideManitoba: boolean;
   selectedRegionId: RegionId;
   selectedMapRegionId: RegionId;
   selectedSubRegionId: string | null;
@@ -80,7 +79,10 @@ type AppState = {
   ensurePredictionForRegion: (regionId?: RegionId) => Promise<void>;
   setSelectedRegion: (regionId: RegionId, source?: LocationSource) => Promise<void>;
   chooseManualRegion: (regionId: RegionId) => Promise<void>;
-  setSelectedZone: (zoneId: string) => Promise<void>;
+  setSelectedZone: (zoneId: string, options?: { refresh?: boolean }) => Promise<void>;
+  locateUser: (options?: { refresh?: boolean }) => Promise<LocateResult>;
+  openRegionPicker: () => void;
+  replayOnboarding: () => void;
   setSelectedMapRegion: (regionId: RegionId) => void;
   setSelectedAlertFilter: (filter: FilterValue) => void;
   completeOnboarding: () => void;
@@ -97,55 +99,61 @@ function createInitialSnapshots() {
         weather: {
           category: 'weather',
           value: 'n/a',
-          riskLevel: 'moderate',
+          riskLevel: 'low',
           summary: 'Data temporarily unavailable',
           source: 'Waiting for first sync',
+          dataStatus: 'unavailable',
           lastUpdated: fallbackTimestamp,
         },
         airQuality: {
           category: 'airQuality',
           value: 'n/a',
-          riskLevel: 'moderate',
+          riskLevel: 'low',
           summary: 'Data temporarily unavailable',
           source: 'Waiting for first sync',
+          dataStatus: 'unavailable',
           lastUpdated: fallbackTimestamp,
         },
         wildfire: {
           category: 'wildfire',
           value: 'n/a',
-          riskLevel: 'moderate',
+          riskLevel: 'low',
           summary: 'Data temporarily unavailable',
           source: 'Waiting for first sync',
+          dataStatus: 'unavailable',
           lastUpdated: fallbackTimestamp,
         },
         water: {
           category: 'water',
           value: 'n/a',
-          riskLevel: 'moderate',
+          riskLevel: 'low',
           summary: 'Data temporarily unavailable',
           source: 'Waiting for first sync',
+          dataStatus: 'unavailable',
           lastUpdated: fallbackTimestamp,
         },
         vectorBorne: {
           category: 'vectorBorne',
           value: 'n/a',
-          riskLevel: 'moderate',
+          riskLevel: 'low',
           summary: 'Data temporarily unavailable',
           source: 'Waiting for first sync',
+          dataStatus: 'unavailable',
           lastUpdated: fallbackTimestamp,
         },
         healthAdvisories: {
           category: 'healthAdvisories',
           value: 'n/a',
-          riskLevel: 'moderate',
+          riskLevel: 'low',
           summary: 'Data temporarily unavailable',
           source: 'Waiting for first sync',
+          dataStatus: 'unavailable',
           lastUpdated: fallbackTimestamp,
         },
       },
       safetyIndex: {
-        overallScore: 2,
-        overallRisk: 'moderate',
+        overallScore: 1,
+        overallRisk: 'low',
         breakdown: [],
       },
     };
@@ -262,6 +270,7 @@ export const useAppStore = create<AppState>()(
       userCoordinates: null,
       hasCompletedOnboarding: false,
       showRegionPicker: false,
+      isOutsideManitoba: false,
       selectedRegionId: 'winnipeg',
       selectedMapRegionId: 'winnipeg',
       selectedSubRegionId: null,
@@ -283,9 +292,11 @@ export const useAppStore = create<AppState>()(
         }
 
         let initialRegionId = get().selectedRegionId;
+        // Never prompts here: permission is only requested from the onboarding disclosure or Settings.
         const locationResult = await detectUserRegion();
+        const hasManualChoice = get().locationSource === 'manual';
 
-        if (locationResult.permissionStatus === 'granted' && locationResult.coordinates) {
+        if (locationResult.permissionStatus === 'granted' && locationResult.coordinates && !hasManualChoice) {
           initialRegionId = locationResult.region.id;
           const subRegion = findSubRegionByCoordinates(
             locationResult.coordinates.latitude,
@@ -301,6 +312,15 @@ export const useAppStore = create<AppState>()(
             activeArea: buildLocalAreaProfile(locationResult.region, locationResult.coordinates),
             activeSubRegionLabel: subRegion ? buildSubRegionLabel(subRegion) : null,
             showRegionPicker: false,
+            isOutsideManitoba: false,
+          });
+        } else if (hasManualChoice) {
+          // Keep the area the user picked (including a specific zone).
+          initialRegionId = get().selectedRegionId;
+          set({
+            permissionStatus: locationResult.permissionStatus,
+            isOutsideManitoba: locationResult.outsideManitoba,
+            showRegionPicker: false,
           });
         } else {
           const defaultRegion = getRegionById(get().selectedRegionId ?? 'winnipeg');
@@ -313,14 +333,23 @@ export const useAppStore = create<AppState>()(
             selectedSubRegionId: null,
             activeArea: buildLocalAreaProfile(defaultRegion),
             activeSubRegionLabel: null,
-            showRegionPicker: get().locationSource !== 'manual',
+            isOutsideManitoba: locationResult.outsideManitoba,
+            showRegionPicker: true,
           });
         }
 
-        registerNotifications().catch(() => undefined);
+        if (usePreferencesStore.getState().notificationsEnabled) {
+          // Re-arms the background check; if the OS permission was revoked, reflect that in Settings.
+          void enableRiskNotifications()
+            .then((active) => {
+              if (!active) usePreferencesStore.getState().setNotificationsEnabled(false);
+            })
+            .catch(() => undefined);
+        }
 
         await get().refreshAll();
-        await get().ensurePredictionForRegion(initialRegionId);
+        // The outlook tab loads its own data; the dashboard should not wait for it.
+        void get().ensurePredictionForRegion(initialRegionId);
         set({ isInitialized: true });
       },
       refreshAll: async () => {
@@ -348,19 +377,34 @@ export const useAppStore = create<AppState>()(
                 : shouldLocalizeActiveArea && activeArea
                   ? snapshots[activeArea.parentRegionId] ?? null
                   : snapshots[get().selectedRegionId] ?? null;
+            // Show the area immediately from regional data; local weather refines it below.
             const localizedResult =
               selectedZone && parentSnapshot
-                ? await fetchZoneSnapshot(selectedZone, parentSnapshot, alertDetails, mapLocationAlerts).catch(() =>
-                    buildZoneSnapshotPreview(selectedZone, parentSnapshot, alertDetails, mapLocationAlerts),
-                  )
+                ? buildZoneSnapshotPreview(selectedZone, parentSnapshot, alertDetails, mapLocationAlerts)
                 : shouldLocalizeActiveArea && activeArea && parentSnapshot
-                  ? await fetchLocalAreaSnapshot(activeArea, parentSnapshot, alertDetails, mapLocationAlerts).catch(() =>
-                      buildLocalAreaSnapshotPreview(activeArea, parentSnapshot, alertDetails, mapLocationAlerts),
-                    )
-                : null;
+                  ? buildLocalAreaSnapshotPreview(activeArea, parentSnapshot, alertDetails, mapLocationAlerts)
+                  : null;
 
-            await cacheOfflineAlertPayload(snapshots, alertDetails, mapLocationAlerts);
-            await primeOfflineLocationMonitor(get().userCoordinates);
+            const localRefinement =
+              selectedZone && parentSnapshot
+                ? fetchZoneSnapshot(selectedZone, parentSnapshot, alertDetails, mapLocationAlerts)
+                : shouldLocalizeActiveArea && activeArea && parentSnapshot
+                  ? fetchLocalAreaSnapshot(activeArea, parentSnapshot, alertDetails, mapLocationAlerts)
+                  : null;
+            const selectionKey = `${get().selectedSubRegionId}|${get().activeArea?.id}|${get().locationSource}`;
+            void localRefinement
+              ?.then((refined) => {
+                const current = `${get().selectedSubRegionId}|${get().activeArea?.id}|${get().locationSource}`;
+                // Ignore the result if the user switched areas while it was loading.
+                if (current !== selectionKey || waterShapeEnrichmentRun !== latestWaterShapeEnrichmentRun) return;
+                set({
+                  selectedAreaSnapshot: refined.snapshot,
+                  selectedAreaAlertDetails: [...refined.exactAlerts, ...refined.broaderAlerts],
+                });
+              })
+              .catch(() => undefined);
+
+            void setNotificationRegion(get().selectedRegionId);
 
             set({
               snapshots,
@@ -409,7 +453,7 @@ export const useAppStore = create<AppState>()(
               });
             }
 
-            await get().ensurePredictionForRegion(get().selectedRegionId);
+            void get().ensurePredictionForRegion(get().selectedRegionId);
             return;
           }
           set({ isOffline: true, isRefreshing: false });
@@ -478,8 +522,7 @@ export const useAppStore = create<AppState>()(
         });
 
         await get().refreshAll();
-        await get().ensurePredictionForRegion(selectedRegionId);
-        await wait(220);
+        void get().ensurePredictionForRegion(selectedRegionId);
         set({ isRegionSwitching: false });
       },
       chooseManualRegion: async (regionId) => {
@@ -496,7 +539,7 @@ export const useAppStore = create<AppState>()(
         });
         await get().setSelectedRegion(regionId, 'manual');
       },
-      setSelectedZone: async (zoneId: string) => {
+      setSelectedZone: async (zoneId: string, { refresh = true }: { refresh?: boolean } = {}) => {
         const zone: SubRegion | undefined = MANITOBA_SUB_REGIONS.find((z) => z.id === zoneId);
         if (!zone) return;
         const parentSnapshot = get().snapshots[zone.parentRegionId] ?? null;
@@ -515,14 +558,57 @@ export const useAppStore = create<AppState>()(
           activeSubRegionLabel: zone.name,
           selectedAreaSnapshot: preview?.snapshot ?? parentSnapshot,
           selectedAreaAlertDetails: preview ? [...preview.exactAlerts, ...preview.broaderAlerts] : get().rawAlertDetails,
-          isRegionSwitching: true,
+          isOutsideManitoba: false,
+          isRegionSwitching: refresh,
         });
+        if (!refresh) return;
         await get().refreshAll();
-        await get().ensurePredictionForRegion(zone.parentRegionId);
-        await wait(220);
+        void get().ensurePredictionForRegion(zone.parentRegionId);
         set({ isRegionSwitching: false });
       },
-      completeOnboarding: () => set({ hasCompletedOnboarding: true }),
+      locateUser: async ({ refresh = true } = {}) => {
+        const result = await detectUserRegion({ prompt: true });
+
+        if (result.permissionStatus !== 'granted') {
+          set({ permissionStatus: result.permissionStatus });
+          return 'denied';
+        }
+
+        if (!result.coordinates) {
+          set({ permissionStatus: 'granted', isOutsideManitoba: result.outsideManitoba });
+          return result.outsideManitoba ? 'outside' : 'denied';
+        }
+
+        const subRegion = findSubRegionByCoordinates(result.coordinates.latitude, result.coordinates.longitude);
+        set({
+          permissionStatus: 'granted',
+          locationSource: 'gps',
+          userCoordinates: result.coordinates,
+          selectedRegionId: result.region.id,
+          selectedMapRegionId: result.region.id,
+          selectedSubRegionId: subRegion?.id ?? null,
+          activeArea: buildLocalAreaProfile(result.region, result.coordinates),
+          activeSubRegionLabel: subRegion ? buildSubRegionLabel(subRegion) : null,
+          selectedAreaSnapshot: get().snapshots[result.region.id] ?? null,
+          showRegionPicker: false,
+          isOutsideManitoba: false,
+        });
+
+        if (refresh && get().isInitialized) {
+          set({ isRegionSwitching: true });
+          await get().refreshAll();
+          void get().ensurePredictionForRegion(result.region.id);
+          set({ isRegionSwitching: false });
+        }
+        return 'granted';
+      },
+      openRegionPicker: () => set({ showRegionPicker: true }),
+      replayOnboarding: () => set({ hasCompletedOnboarding: false }),
+      completeOnboarding: () => {
+        set({ hasCompletedOnboarding: true });
+        // After a replayed tour the location may have changed, so pull fresh data for it.
+        if (get().isInitialized) void get().refreshAll();
+      },
       dismissRegionPicker: () => set({ showRegionPicker: false }),
       setSelectedMapRegion: (selectedMapRegionId) => set({ selectedMapRegionId }),
       setSelectedAlertFilter: (selectedAlertFilter) => set({ selectedAlertFilter }),

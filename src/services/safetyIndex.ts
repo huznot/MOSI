@@ -46,9 +46,15 @@ export function calculateSafetyIndex(
   const weights: Record<CategoryId, number> =
     weekOfYear !== undefined ? getSeasonalWeights(weekOfYear) : SAFETY_INDEX_WEIGHTS;
 
-  const breakdown = (Object.keys(weights) as CategoryId[]).map((category) => {
+  // Categories with no data are left out and the remaining weights rescaled to sum to 1,
+  // so a failed download never nudges the score up or down.
+  const categories = Object.keys(weights) as CategoryId[];
+  const isAvailable = (category: CategoryId) => alerts[category].dataStatus !== 'unavailable';
+  const availableWeight = categories.filter(isAvailable).reduce((sum, category) => sum + weights[category], 0);
+
+  const breakdown = categories.map((category) => {
     const numericRisk = riskLevelToNumber(alerts[category].riskLevel);
-    const weight = weights[category];
+    const weight = isAvailable(category) && availableWeight > 0 ? weights[category] / availableWeight : 0;
 
     return {
       category,
@@ -59,10 +65,11 @@ export function calculateSafetyIndex(
     };
   });
 
-  const overallScore = breakdown.reduce((sum, item) => sum + item.contribution, 0);
+  // With no data at all, fall back to the scale minimum; the UI shows a "no data" state instead.
+  const overallScore = availableWeight > 0 ? breakdown.reduce((sum, item) => sum + item.contribution, 0) : 1;
   let overallRisk = scoreToRiskLevel(overallScore);
 
-  if (overallRisk === 'low' && breakdown.some((item) => item.riskLevel === 'high')) {
+  if (overallRisk === 'low' && breakdown.some((item) => item.weight > 0 && item.riskLevel === 'high')) {
     overallRisk = 'moderate';
   }
 

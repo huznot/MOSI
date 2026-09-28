@@ -2,7 +2,7 @@ import { STORAGE_KEYS } from '../constants/config';
 import { MbReadyAlert, MbReadySeverity, RegionCoordinate } from '../types/alerts';
 import { fetchText, readFreshCache, writeCache } from './serviceUtils';
 
-const NAAD_ATOM_URL = 'http://rss.naad-adna.pelmorex.com';
+const NAAD_ATOM_URL = 'https://rss.naad-adna.pelmorex.com';
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_CAP_FETCHES = 10;
 const MB_LAT_MIN = 48.9;
@@ -169,7 +169,8 @@ export async function fetchMbReadyAlerts(): Promise<MbReadyAlert[]> {
       if (!href) return null;
       const id = tagFirst(block, 'id') ?? href;
       try {
-        const capXml = await fetchText(href);
+        // Feed links are plain HTTP; the same host serves HTTPS, which avoids needing cleartext traffic on Android.
+        const capXml = await fetchText(href.replace(/^http:\/\//i, 'https://'));
         return parseCapXml(id, capXml);
       } catch {
         return null;

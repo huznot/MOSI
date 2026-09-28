@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { StatusBar, View } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
+import { useFonts } from 'expo-font';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -9,12 +10,17 @@ import { AppSplash } from './src/components/app-splash';
 import { OnboardingFlow } from './src/components/onboarding-flow';
 import { RegionPickerModal } from './src/components/region-picker-modal';
 import { useAppStore } from './src/state/useAppStore';
-import { ThemeProvider, useAppTheme } from './src/theme';
+import { FONT_ASSETS, ThemeProvider, useAppTheme } from './src/theme';
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
+// The branded overlay never blocks the app for longer than this, even on a slow network;
+// screens show their own skeletons while the first refresh finishes.
+const MAX_SPLASH_MS = 2200;
+
 function AppShell() {
   const theme = useAppTheme();
+  const [fontsLoaded, fontError] = useFonts(FONT_ASSETS);
   const isHydrated = useAppStore((state) => state.isHydrated);
   const isInitialized = useAppStore((state) => state.isInitialized);
   const hasCompletedOnboarding = useAppStore((state) => state.hasCompletedOnboarding);
@@ -22,41 +28,50 @@ function AppShell() {
   const initialize = useAppStore((state) => state.initialize);
   const completeOnboarding = useAppStore((state) => state.completeOnboarding);
   const setSelectedZone = useAppStore((state) => state.setSelectedZone);
+  const dismissRegionPicker = useAppStore((state) => state.dismissRegionPicker);
   const [showSplashOverlay, setShowSplashOverlay] = useState(true);
+  const isReady = isHydrated && (fontsLoaded || Boolean(fontError));
 
   useEffect(() => {
-    if (isHydrated && !isInitialized) {
+    if (isHydrated && hasCompletedOnboarding && !isInitialized) {
       void initialize();
     }
-  }, [initialize, isHydrated, isInitialized]);
+  }, [hasCompletedOnboarding, initialize, isHydrated, isInitialized]);
 
   useEffect(() => {
-    if (!isHydrated || !isInitialized) {
+    if (!isReady) {
       return;
     }
 
     void SplashScreen.hideAsync().catch(() => undefined);
 
-    const timeout = setTimeout(() => {
+    if (!hasCompletedOnboarding) {
       setShowSplashOverlay(false);
-    }, 650);
+      return;
+    }
 
+    const timeout = setTimeout(() => setShowSplashOverlay(false), isInitialized ? 450 : MAX_SPLASH_MS);
     return () => clearTimeout(timeout);
-  }, [isHydrated, isInitialized]);
+  }, [hasCompletedOnboarding, isInitialized, isReady]);
 
-  if (!isHydrated) {
+  if (!isReady) {
     return null;
   }
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <SafeAreaProvider>
-        <StatusBar barStyle={theme.isDark ? 'light-content' : 'dark-content'} />
+        <StatusBar
+          barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+          backgroundColor={theme.colors.background}
+        />
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-          <AppNavigator />
-          {showSplashOverlay ? <AppSplash /> : null}
+          {hasCompletedOnboarding ? <AppNavigator /> : null}
+          {hasCompletedOnboarding && showSplashOverlay ? <AppSplash /> : null}
           {!hasCompletedOnboarding ? <OnboardingFlow onDone={completeOnboarding} /> : null}
-          {hasCompletedOnboarding && showRegionPicker ? <RegionPickerModal onSelect={setSelectedZone} /> : null}
+          {hasCompletedOnboarding && showRegionPicker ? (
+            <RegionPickerModal onSelect={setSelectedZone} onClose={dismissRegionPicker} />
+          ) : null}
         </View>
       </SafeAreaProvider>
     </GestureHandlerRootView>

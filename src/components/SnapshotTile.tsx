@@ -1,32 +1,22 @@
-import React, { useEffect } from 'react';
-import { Pressable, Text, View } from 'react-native';
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeOut,
-  LinearTransition,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import React from 'react';
+import { Pressable, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { CATEGORY_META } from '../constants/config';
 import { CategoryAlert, CategoryId } from '../types/alerts';
 import { useAppTheme } from '../theme';
-import { formatCategory, formatLastUpdated, formatRiskLevel } from '../utils/format';
+import { formatCategory, formatRiskLevel } from '../utils/format';
+import { selectHaptic } from '../utils/haptics';
 import { getRiskColor } from '../utils/risk';
+import { Text } from './ui/Text';
 
 type Props = {
   category: CategoryId;
   alert: CategoryAlert;
-  expanded: boolean;
   onPress: () => void;
-  index?: number;
 };
 
-function getCategoryStat(category: CategoryId, alert: CategoryAlert): string {
+export function getCategoryStat(category: CategoryId, alert: CategoryAlert): string {
   const value = alert.value;
 
   switch (category) {
@@ -38,7 +28,7 @@ function getCategoryStat(category: CategoryId, alert: CategoryAlert): string {
 
       const tempMatch = alert.summary.match(/[-−]?\d+\s*°C/);
       if (tempMatch) return tempMatch[0];
-      return 'Current conditions';
+      return 'See conditions';
     }
     case 'airQuality': {
       if (typeof value === 'number' && Number.isFinite(value)) {
@@ -93,141 +83,86 @@ function getCategoryStat(category: CategoryId, alert: CategoryAlert): string {
   }
 }
 
-function SkeletonTile() {
+/** Plain-language rule behind each category's rating, shown when a tile is expanded. */
+export const RATING_RULES: Record<CategoryId, string> = {
+  weather: 'High with any Environment Canada warning, or at 32°C+ / -30°C or colder. Moderate at 28°C+ / -20°C or colder.',
+  airQuality: 'Based on the Air Quality Health Index: 1-3 low, 4-6 moderate, 7+ high.',
+  wildfire: 'High with an active fire within 100 km. Moderate with fires within 500 km, since smoke travels. Low otherwise.',
+  water: 'High with a public water system advisory at your location. Moderate with a site-specific advisory (e.g. a single facility).',
+  vectorBorne: 'Estimated from season, temperature and region for ticks and mosquitoes. Not a direct measurement.',
+  healthAdvisories:
+    'High for public health emergencies or an emergency alert covering you. Moderate for active advisories, outbreaks or recalls.',
+};
+
+export function SnapshotTile({ category, alert, onPress }: Props) {
   const theme = useAppTheme();
-  const opacity = useSharedValue(1);
-
-  useEffect(() => {
-    opacity.value = withRepeat(withTiming(0.4, { duration: 800 }), -1, true);
-  }, [opacity]);
-
-  const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const { colors: c, spacing: sp, typography: ty, radii } = theme;
+  const unavailable = alert.dataStatus === 'unavailable';
+  // Missing data is shown as neutral grey, never as a risk colour.
+  const accent = unavailable ? c.textSoft : getRiskColor(alert.riskLevel, c);
+  const soft = unavailable
+    ? c.cardTertiary
+    : alert.riskLevel === 'high'
+      ? c.highSoft
+      : alert.riskLevel === 'moderate'
+        ? c.mediumSoft
+        : c.lowSoft;
+  const stat = unavailable ? 'Unavailable' : getCategoryStat(category, alert);
+  const levelLabel = unavailable ? 'No data' : formatRiskLevel(alert.riskLevel);
+  const reason = unavailable ? "Couldn't reach this source." : alert.summary;
 
   return (
-    <Animated.View
-      style={[
-        animatedStyle,
-        {
-          flex: 1,
-          minWidth: '48%',
-          height: 150,
-          backgroundColor: theme.colors.skeleton,
-          borderRadius: theme.radii.lg,
-        },
-      ]}
-    />
-  );
-}
-
-export function SnapshotTile({ category, alert, expanded, onPress, index = 0 }: Props) {
-  const theme = useAppTheme();
-  const accent = getRiskColor(alert.riskLevel, theme.colors);
-  const stat = getCategoryStat(category, alert);
-
-  return (
-    <Animated.View
-      entering={FadeInDown.duration(280).delay(index * 60)}
-      layout={LinearTransition.springify()}
-      style={{ flex: 1, minWidth: '48%' }}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${formatCategory(category)}: ${levelLabel}. ${stat}. ${reason}`}
+      accessibilityHint="Shows why it has this rating"
+      onPress={() => {
+        selectHaptic();
+        onPress();
+      }}
+      style={({ pressed }) => ({
+        flexGrow: 1,
+        flexBasis: '46%',
+        backgroundColor: pressed ? c.cardSecondary : c.card,
+        borderRadius: radii.lg,
+        borderWidth: 1,
+        borderColor: c.border,
+        padding: sp.md,
+        gap: sp.sm,
+        minHeight: 150,
+        boxShadow: theme.shadows.card,
+      })}
     >
-      <Pressable
-        onPress={onPress}
-        style={{
-          backgroundColor: theme.colors.card,
-          borderRadius: theme.radii.lg,
-          padding: theme.spacing.md,
-          gap: theme.spacing.sm,
-          minHeight: expanded ? 200 : 150,
-          boxShadow: theme.shadows.card,
-        }}
-      >
-        {}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: theme.spacing.sm }}>
-          <View
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 19,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: `${accent}20`,
-            }}
-          >
-            <MaterialCommunityIcons name={CATEGORY_META[category].icon as never} size={18} color={accent} />
-          </View>
-
-          <View style={{ alignItems: 'flex-end', gap: theme.spacing.xs }}>
-            <View
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 12,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: theme.colors.cardSecondary,
-                borderWidth: 1,
-                borderColor: theme.colors.divider,
-              }}
-            >
-              <MaterialCommunityIcons
-                name={expanded ? 'minus' : 'plus'}
-                size={15}
-                color={theme.colors.textMuted}
-              />
-            </View>
-
-            {}
-            <View
-              style={{
-                alignSelf: 'flex-start',
-                borderRadius: theme.radii.pill,
-                paddingHorizontal: 10,
-                paddingVertical: 5,
-                backgroundColor: `${accent}18`,
-              }}
-            >
-              <Text selectable style={{ ...theme.typography.caption, color: accent }}>
-                {formatRiskLevel(alert.riskLevel)}
-              </Text>
-            </View>
-          </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 12,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: soft,
+          }}
+        >
+          <MaterialCommunityIcons name={CATEGORY_META[category].icon as never} size={20} color={accent} />
         </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: accent }} />
+          <Text style={{ ...ty.caption, fontSize: 12, color: accent, fontWeight: '700' }}>{levelLabel}</Text>
+        </View>
+      </View>
 
-        {}
-        <Text selectable style={{ ...theme.typography.title, color: theme.colors.text }}>
-          {formatCategory(category)}
+      <View style={{ gap: 2 }}>
+        <Text style={{ ...ty.caption, color: c.textMuted }}>{formatCategory(category)}</Text>
+        <Text style={{ fontFamily: 'Display-700', fontSize: 19, lineHeight: 23, color: c.text }} numberOfLines={2}>
+          {stat}
         </Text>
+      </View>
 
-        {}
-        {stat ? (
-          <Text selectable style={{ ...theme.typography.bodyStrong, color: theme.colors.textMuted }}>
-            {stat}
-          </Text>
-        ) : null}
-
-        {}
-        {expanded ? (
-          <Animated.View
-            entering={FadeIn.duration(200)}
-            exiting={FadeOut.duration(140)}
-            style={{ gap: theme.spacing.xs, marginTop: theme.spacing.xs }}
-          >
-            <Text selectable style={{ ...theme.typography.body, color: theme.colors.textMuted }}>
-              {alert.summary}
-            </Text>
-            <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft }}>
-              Source: {alert.source}
-            </Text>
-            {alert.lastUpdated ? (
-              <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft }}>
-                Updated: {formatLastUpdated(alert.lastUpdated)}
-              </Text>
-            ) : null}
-          </Animated.View>
-        ) : null}
-      </Pressable>
-    </Animated.View>
+      {/* The "why", visible without tapping; the sheet has the full rule and source. */}
+      <Text style={{ ...ty.caption, color: c.textMuted }} numberOfLines={2}>
+        {reason}
+      </Text>
+    </Pressable>
   );
 }
-
-export { SkeletonTile };

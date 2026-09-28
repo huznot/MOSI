@@ -1,67 +1,58 @@
 import { TextStyle } from 'react-native';
 
-const systemFont = undefined;
+import { fonts } from './fonts';
 
 export function createTypography() {
   return {
     hero: {
-      fontFamily: systemFont,
-      fontSize: 56,
-      lineHeight: 60,
-      fontWeight: '800',
-      letterSpacing: -1.4,
+      fontFamily: fonts.display,
+      fontSize: 64,
+      lineHeight: 66,
+      letterSpacing: -2,
     } satisfies TextStyle,
     display: {
-      fontFamily: systemFont,
-      fontSize: 40,
-      lineHeight: 44,
-      fontWeight: '800',
+      fontFamily: fonts.display,
+      fontSize: 34,
+      lineHeight: 38,
       letterSpacing: -0.8,
     } satisfies TextStyle,
     heading: {
-      fontFamily: systemFont,
+      fontFamily: fonts.displayBold,
       fontSize: 24,
       lineHeight: 29,
-      fontWeight: '700',
       letterSpacing: -0.4,
     } satisfies TextStyle,
     title: {
-      fontFamily: systemFont,
+      fontFamily: fonts.bodyBold,
       fontSize: 17,
       lineHeight: 22,
-      fontWeight: '700',
     } satisfies TextStyle,
     body: {
-      fontFamily: systemFont,
+      fontFamily: fonts.body,
       fontSize: 15,
       lineHeight: 22,
-      fontWeight: '500',
     } satisfies TextStyle,
     bodyStrong: {
-      fontFamily: systemFont,
+      fontFamily: fonts.bodySemi,
       fontSize: 15,
       lineHeight: 22,
-      fontWeight: '700',
     } satisfies TextStyle,
     caption: {
-      fontFamily: systemFont,
+      fontFamily: fonts.bodyMedium,
       fontSize: 13,
       lineHeight: 18,
-      fontWeight: '600',
     } satisfies TextStyle,
     sectionLabel: {
-      fontFamily: systemFont,
-      fontSize: 13,
+      fontFamily: fonts.bodyBold,
+      fontSize: 12,
       lineHeight: 16,
-      fontWeight: '700',
-      letterSpacing: 1.2,
+      letterSpacing: 1.1,
       textTransform: 'uppercase',
     } satisfies TextStyle,
     tabular: {
-      fontFamily: systemFont,
+      fontFamily: fonts.displayBold,
       fontSize: 15,
       lineHeight: 20,
-      fontWeight: '700',
       fontVariant: ['tabular-nums'],
     } satisfies TextStyle,
   } as const;

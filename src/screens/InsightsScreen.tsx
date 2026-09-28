@@ -1,15 +1,18 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Modal, Pressable, ScrollView, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Text } from '../components/ui/Text';
 import Svg, { Circle } from 'react-native-svg';
 import Animated, {
   Easing,
-  FadeInDown,
-  FadeInUp,
+  FadeIn,
   useAnimatedProps,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { ScreenHeader } from '../components/ui/ScreenHeader';
 
 import { ForecastStrip } from '../components/ForecastStrip';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
@@ -65,7 +68,7 @@ function InfoModal({ modal, onClose }: { modal: InfoModalState; onClose: () => v
   return (
     <Modal visible={!!modal} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+        style={{ flex: 1, backgroundColor: c.scrim, justifyContent: 'flex-end' }}
         onPress={onClose}
       >
         <Pressable
@@ -122,7 +125,7 @@ function SectionHeader({ label, onInfo }: { label: string; onInfo?: () => void }
           color: c.textSoft,
           textTransform: 'uppercase',
           letterSpacing: 1,
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: '700',
           flex: 1,
         }}
@@ -172,7 +175,7 @@ function CategoryArc({
 
   return (
     <Animated.View
-      entering={FadeInUp.duration(350).delay(delay)}
+      entering={FadeIn.duration(200)}
       style={{ alignItems: 'center', gap: 4, flex: 1 }}
     >
       <TouchableOpacity onPress={onPress} activeOpacity={onPress ? 0.7 : 1} style={{ alignItems: 'center', gap: 4 }}>
@@ -209,7 +212,7 @@ function CategoryArc({
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 2 }}>
           <Text
             style={{
-              fontSize: 10,
+              fontSize: 11,
               color: theme.colors.textMuted,
               textAlign: 'center',
               lineHeight: 13,
@@ -278,6 +281,7 @@ export function InsightsScreen() {
   const theme = useAppTheme();
   const { colors: c, spacing: sp, typography: ty, radii, shadows } = theme;
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
 
   const regionId = useAppStore((s) => s.selectedRegionId);
   const selectedSubRegionId = useAppStore((s) => s.selectedSubRegionId);
@@ -351,11 +355,10 @@ export function InsightsScreen() {
 
   return (
     <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{
         paddingHorizontal: sp.md,
-        paddingTop: sp.md,
-        paddingBottom: 120,
+        paddingTop: insets.top + sp.md,
+        paddingBottom: sp.xxl,
         gap: sp.lg,
       }}
       showsVerticalScrollIndicator={false}
@@ -364,20 +367,14 @@ export function InsightsScreen() {
       <InfoModal modal={infoModal} onClose={closeModal} />
 
       {}
-      <View style={{ gap: 2, paddingTop: sp.sm }}>
-        <Text style={{ ...ty.sectionLabel, color: c.textSoft, textTransform: 'uppercase', letterSpacing: 1, fontSize: 10 }}>
-          {locationLabel}
-        </Text>
-        <Text style={{ ...ty.heading, color: c.text, fontWeight: '800', letterSpacing: -0.5 }}>
-          {forecastHeading}
-        </Text>
-        <Text style={{ ...ty.caption, color: c.textMuted, marginTop: 2 }}>
-          Tap any day to see the full breakdown. Tap category gauges for explanations.
-        </Text>
-      </View>
+      <ScreenHeader
+        eyebrow={locationLabel}
+        title={forecastHeading}
+        subtitle="Tap a day for its breakdown, and a gauge to learn what it measures."
+      />
 
       {prediction && !isRegionSwitching ? (
-        <Animated.View entering={FadeInDown.duration(280)} style={{ gap: sp.lg }}>
+        <Animated.View entering={FadeIn.duration(200)} style={{ gap: sp.lg }}>
           {}
           <ForecastStrip
             days={visibleForecastDays}
@@ -401,7 +398,7 @@ export function InsightsScreen() {
               <View style={{ padding: sp.lg, gap: sp.lg }}>
                 {}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ ...ty.sectionLabel, color: c.textSoft, textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 10 }}>
+                  <Text style={{ ...ty.sectionLabel, color: c.textSoft, textTransform: 'uppercase', letterSpacing: 0.8, fontSize: 11 }}>
                     {formatDetailDate(selectedDay.isoDate)}
                   </Text>
                   <TouchableOpacity
@@ -417,7 +414,7 @@ export function InsightsScreen() {
                       paddingVertical: 4,
                     }}
                   >
-                    <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 10 }}>
+                    <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 11 }}>
                       {selectedDetail.confidenceLabel}
                     </Text>
                     <MaterialCommunityIcons name="information-outline" size={11} color={c.textMuted} />
@@ -456,7 +453,7 @@ export function InsightsScreen() {
                       <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 12 }}>/3</Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                      <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 10 }}>MOSI</Text>
+                      <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 11 }}>MOSI</Text>
                       <MaterialCommunityIcons name="information-outline" size={10} color={c.textMuted} />
                     </View>
                   </TouchableOpacity>
@@ -484,7 +481,7 @@ export function InsightsScreen() {
                         {' '}/ {formatTemperature(selectedDay.lowC)}
                       </Text>
                     </Text>
-                    <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 10 }} numberOfLines={1}>
+                    <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 11 }} numberOfLines={1}>
                       {selectedDetail.headline}
                     </Text>
                   </View>
@@ -500,7 +497,7 @@ export function InsightsScreen() {
                     borderLeftColor: overallAccent,
                   }}
                 >
-                  <Text style={{ ...ty.caption, color: c.textSoft, textTransform: 'uppercase', fontSize: 9, letterSpacing: 1, marginBottom: 4 }}>
+                  <Text style={{ ...ty.caption, color: c.textSoft, textTransform: 'uppercase', fontSize: 11, letterSpacing: 1, marginBottom: 4 }}>
                     What this means
                   </Text>
                   <Text selectable style={{ ...ty.body, color: c.text, lineHeight: 20 }}>
@@ -586,7 +583,7 @@ export function InsightsScreen() {
                           backgroundColor: getRiskColor(level, c),
                         }}
                       />
-                      <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 10 }}>
+                      <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 11 }}>
                         {formatRiskLevel(level)}{' '}
                         <Text style={{ color: c.textSoft }}>
                           {level === 'low' ? '0.0-0.9' : level === 'moderate' ? '0.9-2.0' : '2.0-3.0'}
@@ -651,7 +648,7 @@ export function InsightsScreen() {
                                 {series.label}
                               </Text>
                             </View>
-                            <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 10 }}>
+                            <Text style={{ ...ty.caption, color: c.textMuted, fontSize: 11 }}>
                               {trendStartLabel} onward
                             </Text>
                           </View>
@@ -685,7 +682,7 @@ export function InsightsScreen() {
                           color: c.textSoft,
                           textTransform: 'uppercase',
                           letterSpacing: 1,
-                          fontSize: 10,
+                          fontSize: 11,
                           fontWeight: '700',
                         }}
                       >

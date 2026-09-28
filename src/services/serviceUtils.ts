@@ -14,6 +14,15 @@ class ServiceError extends Error {
   }
 }
 
+// Longest we wait for any single request before treating it as failed.
+const REQUEST_TIMEOUT_MS = 8000;
+
+function withTimeout() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  return { signal: controller.signal, done: () => clearTimeout(timer) };
+}
+
 export function wait(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -74,12 +83,14 @@ export async function writeCache<T>(key: string, data: T) {
 
 export async function fetchText(url: string) {
   try {
+    const timeout = withTimeout();
     const response = await expoFetch(url, {
+      signal: timeout.signal,
       headers: {
         'User-Agent': 'MOSI/1.0',
         Accept: 'text/html,application/xml,text/xml;q=0.9,*/*;q=0.8',
       },
-    });
+    }).finally(timeout.done);
 
     if (!response.ok) {
       throw new ServiceError(`Request failed with HTTP ${response.status}.`, response.status);
@@ -96,12 +107,14 @@ export async function fetchText(url: string) {
 
 export async function fetchJson<T>(url: string) {
   try {
+    const timeout = withTimeout();
     const response = await expoFetch(url, {
+      signal: timeout.signal,
       headers: {
         'User-Agent': 'MOSI/1.0',
         Accept: 'application/json,text/plain,*/*',
       },
-    });
+    }).finally(timeout.done);
 
     if (!response.ok) {
       throw new ServiceError(`Request failed with HTTP ${response.status}.`, response.status);
@@ -118,7 +131,9 @@ export async function fetchJson<T>(url: string) {
 
 export async function postJson<T>(url: string, body: string, contentType = 'text/plain') {
   try {
+    const timeout = withTimeout();
     const response = await expoFetch(url, {
+      signal: timeout.signal,
       method: 'POST',
       headers: {
         'User-Agent': 'MOSI/1.0',
@@ -126,7 +141,7 @@ export async function postJson<T>(url: string, body: string, contentType = 'text
         'Content-Type': contentType,
       },
       body,
-    });
+    }).finally(timeout.done);
 
     if (!response.ok) {
       throw new ServiceError(`Request failed with HTTP ${response.status}.`, response.status);

@@ -5,8 +5,8 @@ import { cleanText, fetchText, firstMatch, withCacheFallback } from './serviceUt
 import { getDistanceKm } from './locationService';
 
 type WeatherAirCache = {
-  weatherByRegion: Record<RegionId, CategoryAlert>;
-  airByRegion: Record<RegionId, CategoryAlert>;
+  weatherByRegion: Partial<Record<RegionId, CategoryAlert>>;
+  airByRegion: Partial<Record<RegionId, CategoryAlert>>;
 };
 
 export function getAirQualityRiskLevel(aqhi: number): RiskLevel {
@@ -19,7 +19,39 @@ export function getAirQualityRiskLevel(aqhi: number): RiskLevel {
   return 'low';
 }
 
+export function describeAqhi(aqhi: number) {
+  if (aqhi >= 10) return 'very high risk';
+  if (aqhi >= 7) return 'high risk';
+  if (aqhi >= 4) return 'moderate risk';
+  return 'low risk';
+}
+
+export function buildWeatherSummary(weather: ReturnType<typeof parseWeatherPage>) {
+  if (weather.hasWarning) {
+    return weather.warningTitle;
+  }
+  const temp = Number.isFinite(weather.temperature) ? `${Math.round(weather.temperature)}°C` : null;
+  const reason =
+    weather.temperature >= 32
+      ? 'Extreme heat'
+      : weather.temperature >= 28
+        ? 'Hot'
+        : weather.temperature <= -30
+          ? 'Extreme cold'
+          : weather.temperature <= -20
+            ? 'Very cold'
+            : null;
+  return [reason, temp, weather.condition || null, 'no weather alerts in effect'].filter(Boolean).join(', ');
+}
+
+function buildAirSummary(aqhi: number, stationName: string) {
+  return `AQHI ${aqhi.toFixed(1)} at ${stationName}, ${describeAqhi(aqhi)} (1-3 low, 4-6 moderate, 7+ high)`;
+}
+
 export function getWeatherRiskLevel(hasWarning: boolean, temperature: number) {
+  if (!Number.isFinite(temperature)) {
+    return hasWarning ? ('high' as const) : ('low' as const);
+  }
   if (hasWarning || temperature <= -30 || temperature >= 32) {
     return 'high' as const;
   }
@@ -34,26 +66,31 @@ export function buildWeatherUrl(region: ManitobaRegion) {
 }
 
 export function buildWeatherUrlForCoordinates(latitude: number, longitude: number) {
-  return `${API_URLS.weatherBase}?coords=${latitude},${longitude}`;
+  // ~1 km precision is enough to pick the right forecast page and avoids sending an exact position.
+  return `${API_URLS.weatherBase}?coords=${latitude.toFixed(2)},${longitude.toFixed(2)}`;
 }
 
 export function parseWeatherPage(html: string) {
   const observedAt =
     firstMatch(html, /<time datetime="([^"]+)"[^>]*>.*?<\/time>/is) ?? new Date().toISOString();
   const condition =
-    cleanText(firstMatch(html, /<dt[^>]*>Condition:<\/dt>\s*<dd[^>]*><span[^>]*>(.*?)<\/span>/is) ?? '') ||
-    STRINGS.defaultSummary;
+    cleanText(firstMatch(html, /<dt[^>]*>Condition:<\/dt>\s*<dd[^>]*>\s*<(?:span|b)[^>]*>(.*?)<\/(?:span|b)>/is) ?? '');
   const temperatureText =
     firstMatch(html, /<dt[^>]*>Temperature:<\/dt>\s*<dd[^>]*><span[^>]*>(-?\d+(?:\.\d+)?)°<\/span>/is) ??
     firstMatch(html, /class="mrgn-bttm-sm lead mrgn-tp-sm"[^>]*><span[^>]*>(-?\d+(?:\.\d+)?)°<\/span>/is);
-  const temperature = Number(temperatureText ?? '0');
+  const temperature = temperatureText === null ? Number.NaN : Number(temperatureText);
   const noAlert = /id="noalert"[\s\S]*?No alerts in effect/i.test(html);
   const alertTitle = cleanText(firstMatch(html, /id="alertbox"[\s\S]*?<h2[^>]*>(.*?)<\/h2>/is) ?? '');
   const hasWarning = !noAlert && /id="alertbox"/i.test(html);
 
+  if (!Number.isFinite(temperature) && !hasWarning && !noAlert) {
+    // Nothing recognisable on the page - treat as a failed fetch rather than guessing.
+    throw new Error('Unrecognised weather page');
+  }
+
   return {
     observedAt,
-    condition,
+    condition: /not observed/i.test(condition) ? '' : condition,
     temperature,
     hasWarning,
     warningTitle: hasWarning ? alertTitle || 'Weather warning in effect' : '',
@@ -73,11 +110,11 @@ export async function fetchLatestAqhiReadings() {
     }
   });
 
-  const entries = await Promise.all(
+  const settled = await Promise.allSettled(
     [...latestByCode.values()].map(async (file) => {
       const xml = await fetchText(`${API_URLS.aqhiIndex}${file}`);
       const regionName = firstMatch(xml, /<region[^>]*nameEn="([^"]+)"/i) ?? 'Unknown';
-      const aqhi = Number(firstMatch(xml, /<airQualityHealthIndex>([^<]+)<\/airQualityHealthIndex>/i) ?? '0');
+      const aqhi = Number(firstMatch(xml, /<airQualityHealthIndex>([^<]+)<\/airQualityHealthIndex>/i) ?? 'NaN');
       const lastUpdated =
         firstMatch(xml, /<UTCStamp>([^<]+)<\/UTCStamp>/i)?.replace(
           /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/,
@@ -92,10 +129,17 @@ export async function fetchLatestAqhiReadings() {
     }),
   );
 
-  return entries.reduce<Record<string, { aqhi: number; lastUpdated: string }>>((accumulator, entry) => {
-    accumulator[entry.regionName] = { aqhi: entry.aqhi, lastUpdated: entry.lastUpdated };
+  const readings = settled.reduce<Record<string, { aqhi: number; lastUpdated: string }>>((accumulator, result) => {
+    if (result.status === 'fulfilled' && Number.isFinite(result.value.aqhi)) {
+      accumulator[result.value.regionName] = { aqhi: result.value.aqhi, lastUpdated: result.value.lastUpdated };
+    }
     return accumulator;
   }, {});
+
+  if (!Object.keys(readings).length) {
+    throw new Error('No AQHI readings available');
+  }
+  return readings;
 }
 
 function getNearestAqhiStationName(
@@ -114,49 +158,72 @@ function getNearestAqhiStationName(
     )[0]?.name ?? 'Winnipeg';
 }
 
+function buildWeatherAlert(html: string, sourceUrl: string): CategoryAlert {
+  const weather = parseWeatherPage(html);
+  return {
+    category: 'weather',
+    value: Number.isFinite(weather.temperature) ? weather.temperature : 'n/a',
+    riskLevel: getWeatherRiskLevel(weather.hasWarning, weather.temperature),
+    summary: buildWeatherSummary(weather),
+    source: STRINGS.weatherSource,
+    sourceUrl,
+    lastUpdated: weather.observedAt || new Date().toISOString(),
+    details: [weather.condition].filter(Boolean),
+    dataStatus: 'live',
+  };
+}
+
+function buildAirAlert(aqhiRecord: { aqhi: number; lastUpdated: string }, stationName: string): CategoryAlert {
+  return {
+    category: 'airQuality',
+    value: aqhiRecord.aqhi,
+    riskLevel: getAirQualityRiskLevel(aqhiRecord.aqhi),
+    summary: buildAirSummary(aqhiRecord.aqhi, stationName),
+    source: STRINGS.weatherSource,
+    sourceUrl: 'https://weather.gc.ca/airquality/pages/provincial_summary/mb_e.html',
+    lastUpdated: aqhiRecord.lastUpdated,
+    details: [`Nearest AQHI station: ${stationName}`],
+    dataStatus: 'live',
+  };
+}
+
+/**
+ * Weather and air quality for one point. Each half is optional: a failure in one
+ * source must not wipe out the other.
+ */
 export async function fetchWeatherAndAirQualityForPoint(latitude: number, longitude: number) {
-  const cacheKey = `${STORAGE_KEYS.weather}:point:${latitude.toFixed(3)}:${longitude.toFixed(3)}`;
-  const { data } = await withCacheFallback<{
-    weatherAlert: CategoryAlert;
-    airAlert: CategoryAlert;
-  }>('weather-air-point', cacheKey, async () => {
-    const [aqhiByStation, html] = await Promise.all([
-      fetchLatestAqhiReadings(),
-      fetchText(buildWeatherUrlForCoordinates(latitude, longitude)),
-    ]);
+  const cacheKey = `${STORAGE_KEYS.weather}:point:${latitude.toFixed(2)}:${longitude.toFixed(2)}`;
+  const { data } = await withCacheFallback<{ weatherAlert?: CategoryAlert; airAlert?: CategoryAlert }>(
+    'weather-air-point',
+    cacheKey,
+    async () => {
+      const [aqhiResult, htmlResult] = await Promise.allSettled([
+        fetchLatestAqhiReadings(),
+        fetchText(buildWeatherUrlForCoordinates(latitude, longitude)),
+      ]);
 
-    const weather = parseWeatherPage(html);
-    const weatherRisk = getWeatherRiskLevel(weather.hasWarning, weather.temperature);
-    const stationName = getNearestAqhiStationName(latitude, longitude, aqhiByStation);
-    const aqhiRecord = aqhiByStation[stationName] ?? aqhiByStation.Winnipeg;
-    const aqhi = aqhiRecord?.aqhi ?? 0;
-    const airRisk = getAirQualityRiskLevel(aqhi);
+      let weatherAlert: CategoryAlert | undefined;
+      if (htmlResult.status === 'fulfilled') {
+        try {
+          weatherAlert = buildWeatherAlert(htmlResult.value, buildWeatherUrlForCoordinates(latitude, longitude));
+        } catch {
+          weatherAlert = undefined;
+        }
+      }
 
-    return {
-      weatherAlert: {
-        category: 'weather',
-        value: weather.temperature,
-        riskLevel: weatherRisk,
-        summary: weather.hasWarning ? weather.warningTitle : `${weather.condition}, ${weather.temperature}C`,
-        source: STRINGS.weatherSource,
-        sourceUrl: buildWeatherUrlForCoordinates(latitude, longitude),
-        lastUpdated: weather.observedAt || new Date().toISOString(),
-        details: weather.hasWarning ? [weather.condition, `${weather.temperature}C`] : [weather.condition],
-        dataStatus: 'live',
-      },
-      airAlert: {
-        category: 'airQuality',
-        value: aqhi,
-        riskLevel: airRisk,
-        summary: `AQHI ${aqhi.toFixed(1)} for ${stationName}`,
-        source: STRINGS.weatherSource,
-        sourceUrl: API_URLS.aqhiIndex,
-        lastUpdated: aqhiRecord?.lastUpdated ?? new Date().toISOString(),
-        details: [`Nearest AQHI observation: ${stationName}`],
-        dataStatus: 'live',
-      },
-    };
-  });
+      let airAlert: CategoryAlert | undefined;
+      if (aqhiResult.status === 'fulfilled') {
+        const stationName = getNearestAqhiStationName(latitude, longitude, aqhiResult.value);
+        const record = aqhiResult.value[stationName];
+        airAlert = record ? buildAirAlert(record, stationName) : undefined;
+      }
+
+      if (!weatherAlert && !airAlert) {
+        throw new Error('Weather and air quality unavailable');
+      }
+      return { weatherAlert, airAlert };
+    },
+  );
 
   return data;
 }
@@ -164,57 +231,39 @@ export async function fetchWeatherAndAirQualityForPoint(latitude: number, longit
 export async function fetchWeatherAndAirQuality(regions: ManitobaRegion[]) {
   const cacheKey = `${STORAGE_KEYS.weather}:all`;
   const { data } = await withCacheFallback<WeatherAirCache>('weather-air', cacheKey, async () => {
-    const aqhiByStation = await fetchLatestAqhiReadings();
+    const [aqhiResult, ...pageResults] = await Promise.allSettled([
+      fetchLatestAqhiReadings(),
+      ...regions.map((region) => fetchText(buildWeatherUrl(region))),
+    ]);
+    const aqhiByStation = aqhiResult.status === 'fulfilled' ? (aqhiResult.value as Awaited<ReturnType<typeof fetchLatestAqhiReadings>>) : null;
 
-    const weatherEntries = await Promise.all(
-      regions.map(async (region) => {
-        const html = await fetchText(buildWeatherUrl(region));
-        const weather = parseWeatherPage(html);
-        const weatherRisk = getWeatherRiskLevel(weather.hasWarning, weather.temperature);
-        const stationName = AQHI_STATION_REGION_MAP[region.id];
-        const aqhiRecord = aqhiByStation[stationName] ?? aqhiByStation.Winnipeg;
-        const aqhi = aqhiRecord?.aqhi ?? 0;
-        const airRisk = getAirQualityRiskLevel(aqhi);
+    const result: WeatherAirCache = { weatherByRegion: {}, airByRegion: {} };
+    regions.forEach((region, index) => {
+      const page = pageResults[index];
+      if (page.status === 'fulfilled') {
+        try {
+          result.weatherByRegion[region.id] = buildWeatherAlert(page.value as string, buildWeatherUrl(region));
+        } catch {
+          // Leave this region's weather missing; the aggregator marks it unavailable.
+        }
+      }
 
-        const weatherAlert: CategoryAlert = {
-          category: 'weather',
-          value: weather.temperature,
-          riskLevel: weatherRisk,
-          summary: weather.hasWarning ? weather.warningTitle : `${weather.condition}, ${weather.temperature}C`,
-          source: STRINGS.weatherSource,
-          sourceUrl: buildWeatherUrl(region),
-          lastUpdated: weather.observedAt || new Date().toISOString(),
-          details: weather.hasWarning ? [weather.condition, `${weather.temperature}C`] : [weather.condition],
-          dataStatus: 'live',
-        };
+      if (aqhiByStation) {
+        const preferred = AQHI_STATION_REGION_MAP[region.id];
+        const stationName = aqhiByStation[preferred]
+          ? preferred
+          : getNearestAqhiStationName(region.latitude, region.longitude, aqhiByStation);
+        const record = aqhiByStation[stationName];
+        if (record) {
+          result.airByRegion[region.id] = buildAirAlert(record, stationName);
+        }
+      }
+    });
 
-        const airAlert: CategoryAlert = {
-          category: 'airQuality',
-          value: aqhi,
-          riskLevel: airRisk,
-          summary: `AQHI ${aqhi.toFixed(1)} for ${stationName}`,
-          source: STRINGS.weatherSource,
-          sourceUrl: API_URLS.aqhiIndex,
-          lastUpdated: aqhiRecord?.lastUpdated ?? new Date().toISOString(),
-          details: [`Nearest AQHI observation: ${stationName}`],
-          dataStatus: 'live',
-        };
-
-        return { regionId: region.id, weatherAlert, airAlert };
-      }),
-    );
-
-    return weatherEntries.reduce<WeatherAirCache>(
-      (accumulator, entry) => {
-        accumulator.weatherByRegion[entry.regionId] = entry.weatherAlert;
-        accumulator.airByRegion[entry.regionId] = entry.airAlert;
-        return accumulator;
-      },
-      {
-        weatherByRegion: {} as Record<RegionId, CategoryAlert>,
-        airByRegion: {} as Record<RegionId, CategoryAlert>,
-      },
-    );
+    if (!Object.keys(result.weatherByRegion).length && !Object.keys(result.airByRegion).length) {
+      throw new Error('Weather and air quality unavailable');
+    }
+    return result;
   });
 
   return data;

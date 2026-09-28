@@ -1,12 +1,14 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { CATEGORY_META } from '../constants/config';
 import { AlertDetail } from '../types/alerts';
 import { useAppTheme } from '../theme';
-import { formatDistanceKm, formatLastUpdated } from '../utils/format';
+import { formatDistanceKm, formatLastUpdated, formatRiskLevel } from '../utils/format';
 import { getRiskColor } from '../utils/risk';
+import { Surface } from './ui/Surface';
+import { Text } from './ui/Text';
 
 type Props = {
   item: AlertDetail;
@@ -15,61 +17,63 @@ type Props = {
 
 export function AlertCard({ item, onPress }: Props) {
   const theme = useAppTheme();
-  const accent = getRiskColor(item.riskLevel, theme.colors);
+  const { colors: c, spacing: sp, typography: ty } = theme;
+  const accent = getRiskColor(item.riskLevel, c);
+  const soft = item.riskLevel === 'high' ? c.highSoft : item.riskLevel === 'moderate' ? c.mediumSoft : c.lowSoft;
+  const distance = formatDistanceKm(item.distanceKm);
 
   return (
-    <Pressable
+    <Surface
       onPress={onPress}
-      style={{
-        backgroundColor: theme.colors.card,
-        borderRadius: theme.radii.lg,
-        padding: theme.spacing.md,
-        gap: theme.spacing.sm,
-        borderLeftWidth: 4,
-        borderLeftColor: accent,
-        boxShadow: theme.shadows.card,
-      }}
+      accessibilityLabel={`${formatRiskLevel(item.riskLevel)} risk: ${item.title}`}
+      accessibilityHint="Opens alert details"
+      style={{ gap: sp.sm }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: theme.spacing.sm }}>
-        <View style={{ flex: 1, flexDirection: 'row', gap: theme.spacing.sm }}>
-          <View
-            style={{
-              width: 38,
-              height: 38,
-              borderRadius: 19,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: `${accent}18`,
-            }}
-          >
-            <MaterialCommunityIcons name={CATEGORY_META[item.category].icon as never} size={18} color={accent} />
-          </View>
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text selectable style={{ ...theme.typography.title, color: theme.colors.text }}>
-              {item.title}
-            </Text>
-            <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted }}>
-              {item.source}
-            </Text>
-          </View>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: sp.sm }}>
+        <View
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: soft,
+          }}
+        >
+          <MaterialCommunityIcons name={CATEGORY_META[item.category].icon as never} size={20} color={accent} />
         </View>
-        <MaterialCommunityIcons name="chevron-right" size={20} color={theme.colors.textSoft} />
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={{ ...ty.caption, fontSize: 12, color: accent, fontWeight: '700' }}>
+            {CATEGORY_META[item.category].label}
+          </Text>
+          <Text style={{ ...ty.title, color: c.text }} numberOfLines={2}>
+            {item.title}
+          </Text>
+        </View>
+        <MaterialCommunityIcons name="chevron-right" size={22} color={c.textSoft} />
       </View>
 
-      <Text selectable style={{ ...theme.typography.body, color: theme.colors.textMuted }}>
+      <Text style={{ ...ty.body, color: c.textMuted }} numberOfLines={3}>
         {item.summary}
       </Text>
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm }}>
-        <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft }}>
-          {formatLastUpdated(item.updatedAt)}
-        </Text>
-        {formatDistanceKm(item.distanceKm) ? (
-          <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textSoft }}>
-            {formatDistanceKm(item.distanceKm)}
-          </Text>
-        ) : null}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: sp.sm }}>
+        <MetaPill icon="clock-outline" text={formatLastUpdated(item.updatedAt)} />
+        {distance ? <MetaPill icon="map-marker-distance" text={distance} /> : null}
+        <MetaPill icon="shield-account-outline" text={item.source} />
       </View>
-    </Pressable>
+    </Surface>
+  );
+}
+
+function MetaPill({ icon, text }: { icon: keyof typeof MaterialCommunityIcons.glyphMap; text: string }) {
+  const { colors: c, typography: ty } = useAppTheme();
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, maxWidth: '100%' }}>
+      <MaterialCommunityIcons name={icon} size={13} color={c.textSoft} />
+      <Text style={{ ...ty.caption, fontSize: 12, color: c.textSoft, flexShrink: 1 }} numberOfLines={1}>
+        {text}
+      </Text>
+    </View>
   );
 }

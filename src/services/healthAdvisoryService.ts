@@ -31,11 +31,17 @@ function isHealthAlertHeadline(text: string) {
     return false;
   }
 
+  // Evergreen explainer pages ("Health Effects of Smoke Exposure...") are permanent links,
+  // not active notices, and must not be counted as bulletins.
+  if (/health effects|information|about |what is|how to|guide|resources|faq|fact sheet|reports?$/i.test(text)) {
+    return false;
+  }
+
   return /alert|advisory|outbreak|bulletin|emergency|exposure|recall/i.test(text);
 }
 
 function makeAbsoluteUrl(href: string) {
-  if (/^https?:\/\
+  if (/^https?:\/\//i.test(href)) {
     return href;
   }
   return new URL(href, API_URLS.healthPublic).toString();

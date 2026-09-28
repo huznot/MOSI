@@ -4,8 +4,9 @@ import { OFFICIAL_RHA_POLYGONS, getPolygonBounds } from '../data/manitobaGeometr
 export const API_URLS = {
   weatherBase: 'https://weather.gc.ca/en/location/index.html',
   aqhiIndex: 'https://dd.weather.gc.ca/today/air_quality/aqhi/pnr/observation/realtime/xml/',
+  // Only fires whose record is current (record_start <= now <= record_end), in lat/lon.
   wildfire:
-    'https://cwfis.cfs.nrcan.gc.ca/geoserver/public/wfs?service=WFS&version=1.0.0&request=GetFeature&typeName=public:activefires_current&outputFormat=application/json',
+    'https://geoserver.cwfif.nrcan.gc.ca/geoserver/wfs?service=WFS&version=2.0.1&request=GetFeature&outputFormat=application/json&typeName=public:cwfif_national_activefires&srsName=EPSG:4326&CQL_FILTER=now()%3E=record_start%20AND%20now()%3C=record_end',
   waterExperience:
     'https://www.arcgis.com/sharing/rest/content/items/7024e973cd9b4045b5bb8952ce2b3a19/data?f=json',
   waterPublicPws:
@@ -26,8 +27,7 @@ export const API_URLS = {
 export const STORAGE_KEYS = {
   appState: 'mosi-app-state',
   notifications: 'mosi-notifications',
-  offlineAlertCache: 'cache:offline-alerts',
-  offlineLocationState: 'cache:offline-location-state',
+  notificationRegion: 'mosi-notification-region',
   weather: 'cache:weather',
   airQuality: 'cache:air-quality',
   wildfire: 'cache:wildfire',
@@ -51,11 +51,9 @@ export const SAFETY_INDEX_WEIGHTS = {
   healthAdvisories: 0.1,
 } as const;
 
-export const REFRESH_RETRY_DELAY_MS = 5000;
+// A quick second attempt catches blips; a long pause only made failures feel slow.
+export const REFRESH_RETRY_DELAY_MS = 600;
 export const BACKGROUND_REFRESH_SECONDS = 60 * 30;
-export const BACKGROUND_LOCATION_DISTANCE_METRES = 1500;
-export const BACKGROUND_LOCATION_INTERVAL_MS = 3 * 60 * 1000;
-export const OFFLINE_ALERT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_REGION_ID = 'winnipeg' as const;
 export const PREDICTION_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -197,68 +195,82 @@ export const CATEGORY_META: Record<
   },
 } as const;
 
+export const LICENCES = {
+  oglCanada: 'Open Government Licence – Canada',
+  oglManitoba: 'Open Government Licence – Manitoba',
+  ccBy4: 'CC BY 4.0',
+  odbl: 'ODbL (© OpenStreetMap contributors)',
+} as const;
+
 export const DATA_SOURCE_META = [
   {
-    name: 'Environment Canada weather pages',
-    provides: 'Current conditions, warnings, and 7-day forecast outlooks',
-    frequency: 'Hourly observations, daily forecast updates',
-    url: API_URLS.weatherBase,
+    name: 'Environment and Climate Change Canada',
+    provides: 'Current conditions and weather warnings',
+    frequency: 'Hourly observations',
+    licence: LICENCES.oglCanada,
+    url: 'https://weather.gc.ca/',
   },
   {
-    name: 'Environment Canada AQHI XML',
-    provides: 'Nearest AQHI observations for Manitoba stations',
+    name: 'ECCC Air Quality Health Index',
+    provides: 'AQHI readings from the nearest Manitoba station',
     frequency: 'Hourly',
-    url: API_URLS.aqhiIndex,
+    licence: LICENCES.oglCanada,
+    url: 'https://weather.gc.ca/airquality/pages/provincial_summary/mb_e.html',
   },
   {
     name: 'Canadian Wildland Fire Information System',
-    provides: 'Active wildfire coordinates and fire size',
-    frequency: 'Updated throughout the day',
-    url: API_URLS.wildfire,
+    provides: 'Active wildfire locations and sizes',
+    frequency: 'Several times a day',
+    licence: LICENCES.oglCanada,
+    url: 'https://cwfis.cfs.nrcan.gc.ca/interactive-map',
   },
   {
     name: 'Manitoba drinking water advisories',
-    provides: 'Boil water and drinking water avoidance advisories',
-    frequency: 'Live ArcGIS layers',
-    url: API_URLS.waterExperience,
+    provides: 'Boil water and do-not-consume advisories',
+    frequency: 'Live provincial map layers',
+    licence: LICENCES.oglManitoba,
+    url: 'https://www.gov.mb.ca/sd/water/drinking-water/advisory/index.html',
   },
   {
-    name: 'OpenStreetMap community mapping',
-    provides: 'Building and park footprints used to tighten some site-specific water alert shapes',
-    frequency: 'Queried on demand and cached locally',
-    url: API_URLS.osmOverpass,
-  },
-  {
-    name: 'Manitoba tick-borne disease guidance',
-    provides: 'Seasonal vector context and public guidance',
-    frequency: 'Reference guidance, model refreshed daily',
-    url: API_URLS.vectorTick,
+    name: 'Manitoba beach water quality monitoring',
+    provides: 'E. coli and algal bloom sample results at public beaches',
+    frequency: 'Weekly in beach season',
+    licence: LICENCES.oglManitoba,
+    url: 'https://www.gov.mb.ca/sd/water/lakes-beaches-rivers/manitoba-beaches.html',
   },
   {
     name: 'Manitoba Public Health',
-    provides: 'Bulletins, advisories, and outbreak headlines',
-    frequency: 'Checked on each app refresh',
-    url: API_URLS.healthPublic,
-  },
-] as const;
-
-export const ONBOARDING_SLIDES = [
-  {
-    id: 'score',
-    emoji: '🛡️',
-    title: 'One Score. All Risks.',
-    description: 'MOSI blends weather, smoke, wildfire, water, vector, and health signals into one daily read.',
+    provides: 'Public health bulletins and tick-borne disease guidance',
+    frequency: 'Checked on each refresh',
+    licence: LICENCES.oglManitoba,
+    url: 'https://www.gov.mb.ca/health/publichealth/',
   },
   {
-    id: 'manitoba',
-    emoji: '🌲',
-    title: 'Built for Manitoba',
-    description: 'Northern travel, prairie storms, smoke, and local advisories all matter differently here.',
+    name: 'National Alert Aggregation & Dissemination (NAAD)',
+    provides: 'Public emergency alerts issued for Manitoba (Alert Ready)',
+    frequency: 'Checked every 10 minutes while open',
+    licence: 'Pelmorex NAAD public feed',
+    url: 'https://www.alertready.ca/',
   },
   {
-    id: 'predictive',
-    emoji: '📈',
-    title: 'Predictive, Not Just Reactive',
-    description: 'Forecast-informed outlooks show where risk may build next, not just where it already is.',
+    name: 'Manitoba Hydro',
+    provides: 'Current power outage areas (map only)',
+    frequency: 'Checked on each refresh',
+    licence: 'Public outage map data',
+    url: 'https://www.hydro.mb.ca/outages/',
+  },
+  {
+    name: 'Open-Meteo',
+    provides: '7-day forecast inputs for the outlook tab',
+    frequency: 'Every 6 hours',
+    licence: LICENCES.ccBy4,
+    url: 'https://open-meteo.com/',
+  },
+  {
+    name: 'OpenStreetMap',
+    provides: 'Building and park outlines used to draw some water advisory areas',
+    frequency: 'On demand, cached',
+    licence: LICENCES.odbl,
+    url: 'https://www.openstreetmap.org/copyright',
   },
 ] as const;

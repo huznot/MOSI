@@ -29,9 +29,10 @@ export function createUnavailableAlert(category: CategoryId): CategoryAlert {
   return {
     category,
     value: 'n/a',
-    riskLevel: 'moderate',
+    // Unknown is not "moderate": calculateSafetyIndex skips unavailable categories entirely.
+    riskLevel: 'low',
     summary: 'Data temporarily unavailable',
-    source: 'Cached fallback unavailable',
+    source: 'Source could not be reached',
     lastUpdated: new Date().toISOString(),
     dataStatus: 'unavailable',
   };
@@ -44,36 +45,29 @@ export async function refreshAllRegionData(
 ) {
   const regions = getAllRegions();
 
-  let weatherAir: Awaited<ReturnType<typeof fetchWeatherAndAirQuality>> | null = null;
-  try {
-    weatherAir = await fetchWeatherAndAirQuality(regions);
-  } catch {
-    weatherAir = null;
-  }
-
-  const tempByRegion: Partial<Record<RegionId, number>> = {};
-  if (weatherAir) {
+  // Every source starts at once; only the vector model waits, because it needs temperatures.
+  const weatherAirPromise = fetchWeatherAndAirQuality(regions).catch(() => null);
+  const vectorPromise = weatherAirPromise.then((weather) => {
+    const tempByRegion: Partial<Record<RegionId, number>> = {};
     for (const region of regions) {
-      const temp = weatherAir.weatherByRegion[region.id]?.value;
+      const temp = weather?.weatherByRegion[region.id]?.value;
       if (typeof temp === 'number' && Number.isFinite(temp)) {
         tempByRegion[region.id] = temp;
       }
     }
-  }
+    return fetchVectorAlerts(regions, tempByRegion);
+  });
 
-  const results = await Promise.allSettled([
-    fetchWildfireAlerts(regions),
-    fetchWaterAlerts(regions, userCoordinates, selectedZone ?? null, focusedRegionId),
-    fetchVectorAlerts(regions, tempByRegion),
-    fetchHealthAlerts(regions),
-    fetchMbReadyAlerts(),
+  const orNull = <T,>(promise: Promise<T>) => promise.catch(() => null);
+  const [weatherAir, wildfire, water, vector, health, mbReadyResult] = await Promise.all([
+    weatherAirPromise,
+    orNull(fetchWildfireAlerts(regions)),
+    orNull(fetchWaterAlerts(regions, userCoordinates, selectedZone ?? null, focusedRegionId)),
+    orNull(vectorPromise),
+    orNull(fetchHealthAlerts(regions)),
+    orNull(fetchMbReadyAlerts()),
   ]);
-
-  const wildfire   = results[0].status === 'fulfilled' ? results[0].value : null;
-  const water      = results[1].status === 'fulfilled' ? results[1].value : null;
-  const vector     = results[2].status === 'fulfilled' ? results[2].value : null;
-  const health     = results[3].status === 'fulfilled' ? results[3].value : null;
-  const mbReady    = results[4].status === 'fulfilled' ? results[4].value : [];
+  const mbReady = mbReadyResult ?? [];
 
   const mbReadyInsideUser: MbReadyAlert[] = userCoordinates && mbReady.length
     ? mbReady.filter(
@@ -109,6 +103,7 @@ export async function refreshAllRegionData(
           ? {
               ...baseHealthAlert,
               riskLevel: mbReadyWorstSeverity,
+              dataStatus: 'live',
               summary: [
                 mbReadyInsideUser[0]?.headline ?? 'Active government emergency alert in your area',
                 baseHealthAlert.summary !== 'Data temporarily unavailable' ? baseHealthAlert.summary : null,

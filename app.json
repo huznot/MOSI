@@ -1,46 +1,87 @@
 {
   "expo": {
     "name": "MOSI",
-    "slug": "onehealth-manitoba-demo",
+    "slug": "mosi-manitoba",
+    "description": "Manitoba Outdoor Safety Index: one score for outdoor conditions in your part of Manitoba.",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "scheme": "onehealthmanitoba",
-    "splash": {
-      "resizeMode": "contain",
-      "backgroundColor": "#2D6A4F"
-    },
+    "scheme": "mosi",
+    "backgroundColor": "#F2EEE6",
     "ios": {
-      "supportsTablet": true,
+      "bundleIdentifier": "com.mosimanitoba.app",
+      "buildNumber": "1",
+      "supportsTablet": false,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "MOSI uses your location to detect your Manitoba region and show nearby alerts.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "MOSI uses background location to warn you when last-synced advisories may still affect your area while you travel."
+        "NSLocationWhenInUseUsageDescription": "MOSI uses your location while the app is open to find your Manitoba area and show nearby advisories. It is not stored or shared.",
+        "UIBackgroundModes": [
+          "fetch"
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "package": "com.mosimanitoba.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-mono.png",
+        "backgroundColor": "#1F5C45"
+      },
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION"
+        "ACCESS_FINE_LOCATION"
+      ],
+      "blockedPermissions": [
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "plugins": [
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "MOSI uses your location to detect your Manitoba region and show nearby alerts.",
-          "locationAlwaysAndWhenInUsePermission": "MOSI uses background location to warn you when last-synced advisories may still affect your area while you travel.",
-          "isIosBackgroundLocationEnabled": true,
-          "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "locationWhenInUsePermission": "MOSI uses your location while the app is open to find your Manitoba area and show nearby advisories. It is not stored or shared.",
+          "isIosBackgroundLocationEnabled": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
         }
       ],
-      "expo-notifications",
-      "expo-splash-screen"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#1F5C45"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 112,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2EEE6",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#0E1311"
+          }
+        }
+      ],
+      "expo-font"
     ],
     "extra": {
-      "defaultSeed": "onehealth-manitoba-v1"
-    }
+      "defaultSeed": "onehealth-manitoba-v1",
+      "eas": {
+        "projectId": "4221a036-a067-45ae-9907-827fe29dd70e"
+      }
+    },
+    "owner": "huznot"
   }
 }

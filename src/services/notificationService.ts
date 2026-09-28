@@ -1,525 +1,173 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as BackgroundFetch from 'expo-background-fetch';
-import * as Location from 'expo-location';
-import * as Notifications from 'expo-notifications';
-import * as TaskManager from 'expo-task-manager';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform } from 'react-native';
+import type * as BackgroundFetchModule from 'expo-background-fetch';
+import type * as NotificationsModule from 'expo-notifications';
+import type * as TaskManagerModule from 'expo-task-manager';
 
-import {
-  ALERT_PROXIMITY_KM,
-  BACKGROUND_LOCATION_DISTANCE_METRES,
-  BACKGROUND_LOCATION_INTERVAL_MS,
-  BACKGROUND_REFRESH_SECONDS,
-  CATEGORY_META,
-  OFFLINE_ALERT_CACHE_MAX_AGE_MS,
-  STORAGE_KEYS,
-} from '../constants/config';
-import { STRINGS } from '../constants/strings';
-import {
-  AlertDetail,
-  CategoryAlert,
-  CategoryId,
-  RegionId,
-  RegionSnapshot,
-  RiskLevel,
-  UserCoordinates,
-} from '../types/alerts';
-import { formatRelativeMinutes } from '../utils/format';
+import { BACKGROUND_REFRESH_SECONDS, CATEGORY_META, STORAGE_KEYS } from '../constants/config';
+import { CategoryId, RegionId, RegionSnapshot } from '../types/alerts';
 import { refreshAllRegionData } from './alertAggregator';
-import { getDistanceKm, getRegionById, getRegionFromCoordinates } from './locationService';
-import { waterAreaContainsPoint } from './waterAdvisoryService';
+import { getRegionById } from './locationService';
 
 const BACKGROUND_TASK_NAME = 'manitoba-outdoor-safety-background-check';
-const BACKGROUND_LOCATION_TASK_NAME = 'manitoba-outdoor-safety-location-monitor';
-const SUMMARY_NOTIFICATION_CATEGORIES: readonly CategoryId[] = ['weather', 'airQuality', 'vectorBorne'];
-const ANDROID_LOCATION_SERVICE_TITLE = 'MOSI travel monitoring';
-const ANDROID_LOCATION_SERVICE_BODY =
-  'MOSI compares last synced alerts with your location while you travel.';
+const ANDROID_CHANNEL_ID = 'risk-alerts';
 
-type CachedRegionAlerts = Record<
-  RegionId,
-  {
-    fetchedAt: string;
-    alerts: RegionSnapshot['alerts'];
-  }
->;
+/**
+ * Expo Go no longer ships the notification / background-fetch native modules, and
+ * importing them there crashes the app on launch. They are only loaded in real builds.
+ */
+export const notificationsSupported =
+  Platform.OS !== 'web' && Constants.executionEnvironment !== ExecutionEnvironment.StoreClient;
 
-type OfflineAlertCache = {
-  cachedAt: string;
-  regions: CachedRegionAlerts;
-  rawAlertDetails: AlertDetail[];
-  mapLocationAlerts: AlertDetail[];
+type NativeModules = {
+  Notifications: typeof NotificationsModule;
+  BackgroundFetch: typeof BackgroundFetchModule;
+  TaskManager: typeof TaskManagerModule;
 };
 
-type OfflineLocationMonitorState = {
-  activeKeys: string[];
-  lastRegionId: RegionId | null;
-  cacheAt: string | null;
-};
+let nativeModules: NativeModules | null = null;
 
-type OfflineNotificationCandidate = {
-  key: string;
-  category: CategoryId;
-  riskLevel: RiskLevel;
-  title: string;
-  body: string;
-};
-
-const severityOrder: Record<RiskLevel, number> = {
-  high: 0,
-  moderate: 1,
-  low: 2,
-};
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
-function getCacheAgeLabel(cachedAt: string) {
-  const relative = formatRelativeMinutes(cachedAt);
-  return relative === 'Unavailable' ? 'last sync unavailable' : `last synced ${relative}`;
-}
-
-function clipText(value: string, maxLength = 110) {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
-}
-
-function isOfflineAlertCacheFresh(cachedAt: string) {
-  const parsed = new Date(cachedAt).getTime();
-  if (!Number.isFinite(parsed)) {
-    return false;
-  }
-
-  return Date.now() - parsed <= OFFLINE_ALERT_CACHE_MAX_AGE_MS;
-}
-
-function buildOfflineRegionCache(snapshots: Record<string, RegionSnapshot>) {
-  return Object.values(snapshots).reduce((accumulator, snapshot) => {
-    accumulator[snapshot.region.id] = {
-      fetchedAt: snapshot.fetchedAt,
-      alerts: snapshot.alerts,
-    };
-    return accumulator;
-  }, {} as CachedRegionAlerts);
-}
-
-function buildOfflineLocationState(activeKeys: string[], lastRegionId: RegionId | null, cacheAt: string | null) {
-  return {
-    activeKeys,
-    lastRegionId,
-    cacheAt,
-  } satisfies OfflineLocationMonitorState;
-}
-
-async function readOfflineAlertCache() {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.offlineAlertCache);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as OfflineAlertCache;
-    if (!parsed || typeof parsed.cachedAt !== 'string') {
-      return null;
-    }
-
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function readOfflineLocationState() {
-  try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEYS.offlineLocationState);
-    if (!raw) {
-      return buildOfflineLocationState([], null, null);
-    }
-
-    const parsed = JSON.parse(raw) as Partial<OfflineLocationMonitorState>;
-    return buildOfflineLocationState(
-      Array.isArray(parsed.activeKeys) ? parsed.activeKeys.filter((value): value is string => typeof value === 'string') : [],
-      parsed.lastRegionId ?? null,
-      parsed.cacheAt ?? null,
-    );
-  } catch {
-    return buildOfflineLocationState([], null, null);
-  }
-}
-
-async function writeOfflineLocationState(state: OfflineLocationMonitorState) {
-  try {
-    await AsyncStorage.setItem(STORAGE_KEYS.offlineLocationState, JSON.stringify(state));
-  } catch {
-
-  }
-}
-
-function buildDetailCandidate(alert: AlertDetail, cachedAt: string): OfflineNotificationCandidate {
-  const cacheLabel = getCacheAgeLabel(cachedAt);
-
-  if (alert.category === 'water') {
-    return {
-      key: `detail:${alert.id}`,
-      category: alert.category,
-      riskLevel: alert.riskLevel,
-      title: 'Possible water advisory nearby',
-      body: `${cacheLabel}, ${alert.title} may still be under a water advisory near your current location. Reconnect to confirm.`,
+function getNativeModules(): NativeModules | null {
+  if (!notificationsSupported) return null;
+  if (!nativeModules) {
+    nativeModules = {
+      Notifications: require('expo-notifications'),
+      BackgroundFetch: require('expo-background-fetch'),
+      TaskManager: require('expo-task-manager'),
     };
   }
-
-  if (alert.category === 'wildfire') {
-    return {
-      key: `detail:${alert.id}`,
-      category: alert.category,
-      riskLevel: alert.riskLevel,
-      title: 'Possible wildfire risk nearby',
-      body: `${cacheLabel}, ${alert.title} may still be affecting your current area. Reconnect to verify current fire or smoke conditions.`,
-    };
-  }
-
-  return {
-    key: `detail:${alert.id}`,
-    category: alert.category,
-    riskLevel: alert.riskLevel,
-    title: 'Possible health advisory nearby',
-    body: `${cacheLabel}, ${clipText(alert.title, 96)} may still apply in your current region. Reconnect to confirm the latest guidance.`,
-  };
+  return nativeModules;
 }
 
-function buildSummaryCandidate(
-  regionId: RegionId,
-  category: CategoryId,
-  alert: CategoryAlert,
-  cachedAt: string,
-): OfflineNotificationCandidate {
-  const cacheLabel = getCacheAgeLabel(cachedAt);
-  const regionLabel = getRegionById(regionId).label;
-  const categoryLabel = CATEGORY_META[category].label;
-
-  return {
-    key: `summary:${regionId}:${category}`,
-    category,
-    riskLevel: alert.riskLevel,
-    title: `Possible ${categoryLabel.toLowerCase()} risk nearby`,
-    body: `${cacheLabel}, ${categoryLabel} in ${regionLabel} was ${alert.riskLevel}. ${clipText(alert.summary, 88)} Reconnect to verify current conditions.`,
-  };
-}
-
-function isOfflineDetailRelevant(
-  alert: AlertDetail,
-  userCoordinates: UserCoordinates,
-  regionId: RegionId,
-) {
-  if (alert.riskLevel === 'low') {
-    return false;
-  }
-
-  if (alert.category === 'water' && alert.coordinates) {
-    return alert.impactRadiusMetres
-      ? waterAreaContainsPoint(
-          alert as AlertDetail & { coordinates: NonNullable<AlertDetail['coordinates']> },
-          userCoordinates,
-        )
-      : getDistanceKm(
-          userCoordinates.latitude,
-          userCoordinates.longitude,
-          alert.coordinates.latitude,
-          alert.coordinates.longitude,
-        ) <= ALERT_PROXIMITY_KM.water;
-  }
-
-  if (alert.category === 'wildfire' && alert.coordinates) {
-    return (
-      getDistanceKm(
-        userCoordinates.latitude,
-        userCoordinates.longitude,
-        alert.coordinates.latitude,
-        alert.coordinates.longitude,
-      ) <= ALERT_PROXIMITY_KM.wildfire
-    );
-  }
-
-  if (alert.category === 'healthAdvisories') {
-    return alert.regionIds.includes(regionId);
-  }
-
-  return false;
-}
-
-function shouldNotifySummaryAlert(category: CategoryId, alert: CategoryAlert) {
-  if (alert.riskLevel === 'high') {
-    return true;
-  }
-
-  if (category === 'weather') {
-    return /warning|watch|advisory|alert/i.test(alert.summary);
-  }
-
-  if (category === 'airQuality') {
-    return /smoke|aqhi|air quality/i.test(alert.summary) && alert.riskLevel !== 'low';
-  }
-
-  return false;
-}
-
-function collectOfflineNotificationCandidates(cache: OfflineAlertCache, userCoordinates: UserCoordinates) {
-  const regionId = getRegionFromCoordinates(userCoordinates.latitude, userCoordinates.longitude).id;
-  const detailAlerts = [
-    ...cache.mapLocationAlerts.filter((alert) => alert.category === 'water'),
-    ...cache.rawAlertDetails.filter((alert) => alert.category !== 'water'),
-  ];
-  const detailCandidates = detailAlerts
-    .filter((alert) => isOfflineDetailRelevant(alert, userCoordinates, regionId))
-    .map((alert) => buildDetailCandidate(alert, cache.cachedAt));
-  const regionAlerts = cache.regions[regionId]?.alerts;
-  const summaryCandidates =
-    regionAlerts === undefined
-      ? []
-      : SUMMARY_NOTIFICATION_CATEGORIES
-          .map((category) => ({ category, alert: regionAlerts[category] }))
-          .filter(({ category, alert }) => shouldNotifySummaryAlert(category, alert))
-          .map(({ category, alert }) => buildSummaryCandidate(regionId, category, alert, cache.cachedAt));
-
-  return [...detailCandidates, ...summaryCandidates].sort(
-    (left, right) => severityOrder[left.riskLevel] - severityOrder[right.riskLevel],
-  );
-}
-
-async function scheduleOfflineLocationNotification(
-  candidates: OfflineNotificationCandidate[],
-  cachedAt: string,
-) {
-  if (!candidates.length) {
-    return;
-  }
-
-  const content =
-    candidates.length === 1
-      ? {
-          title: candidates[0].title,
-          body: candidates[0].body,
-        }
-      : {
-          title: 'Multiple cached MOSI alerts nearby',
-          body: `${getCacheAgeLabel(cachedAt)}, ${candidates.length} cached alerts may still affect your current area. Reconnect to verify current conditions.`,
-        };
-
-  await Notifications.scheduleNotificationAsync({
-    content,
-    trigger: null,
-  });
-}
-
-async function evaluateOfflineAlertCacheForLocation(
-  userCoordinates: UserCoordinates,
-  sendNotifications: boolean,
-) {
-  const [cache, previousState] = await Promise.all([readOfflineAlertCache(), readOfflineLocationState()]);
-  const currentRegionId = getRegionFromCoordinates(userCoordinates.latitude, userCoordinates.longitude).id;
-
-  if (!cache || !isOfflineAlertCacheFresh(cache.cachedAt)) {
-    await writeOfflineLocationState(buildOfflineLocationState([], currentRegionId, cache?.cachedAt ?? null));
-    return;
-  }
-
-  const candidates = collectOfflineNotificationCandidates(cache, userCoordinates);
-  const nextKeys = candidates.map((candidate) => candidate.key);
-  const previousKeys = new Set(previousState.activeKeys);
-  const newlyRelevant = sendNotifications
-    ? candidates.filter((candidate) => !previousKeys.has(candidate.key))
-    : [];
-
-  await writeOfflineLocationState(buildOfflineLocationState(nextKeys, currentRegionId, cache.cachedAt));
-
-  if (sendNotifications && newlyRelevant.length) {
-    await scheduleOfflineLocationNotification(newlyRelevant, cache.cachedAt);
-  }
-}
-
-async function syncOfflineLocationMonitoring(notificationsGranted: boolean) {
-  if (Platform.OS === 'web') {
-    return;
-  }
-
-  const hasStarted = await Location.hasStartedLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME).catch(() => false);
-  if (!notificationsGranted) {
-    if (hasStarted) {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME).catch(() => undefined);
+/** Categories currently at HIGH for one region, keyed by category. */
+export function getHighRiskState(snapshot: RegionSnapshot) {
+  return (Object.entries(snapshot.alerts) as [CategoryId, RegionSnapshot['alerts'][CategoryId]][]).reduce<
+    Record<string, string>
+  >((accumulator, [category, alert]) => {
+    if (alert.riskLevel === 'high' && alert.dataStatus !== 'unavailable') {
+      accumulator[category] = alert.summary;
     }
-    return;
-  }
-
-  const backgroundLocationAvailable = await Location.isBackgroundLocationAvailableAsync().catch(() => false);
-  if (!backgroundLocationAvailable) {
-    return;
-  }
-
-  const foregroundPermission = await Location.getForegroundPermissionsAsync();
-  if (foregroundPermission.status !== 'granted') {
-    if (hasStarted) {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME).catch(() => undefined);
-    }
-    return;
-  }
-
-  let backgroundPermission = await Location.getBackgroundPermissionsAsync();
-  if (backgroundPermission.status !== 'granted') {
-    backgroundPermission = await Location.requestBackgroundPermissionsAsync();
-  }
-
-  if (backgroundPermission.status !== 'granted') {
-    if (hasStarted) {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME).catch(() => undefined);
-    }
-    return;
-  }
-
-  if (hasStarted) {
-    return;
-  }
-
-  await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK_NAME, {
-    accuracy: Location.Accuracy.Balanced,
-    distanceInterval: BACKGROUND_LOCATION_DISTANCE_METRES,
-    timeInterval: BACKGROUND_LOCATION_INTERVAL_MS,
-    deferredUpdatesDistance: BACKGROUND_LOCATION_DISTANCE_METRES,
-    deferredUpdatesInterval: BACKGROUND_LOCATION_INTERVAL_MS,
-    foregroundService: {
-      notificationTitle: ANDROID_LOCATION_SERVICE_TITLE,
-      notificationBody: ANDROID_LOCATION_SERVICE_BODY,
-      notificationColor: '#2D6A4F',
-    },
-  }).catch(() => undefined);
-}
-
-export function getHighRiskState(snapshots: Record<string, RegionSnapshot>) {
-  return Object.values(snapshots).reduce<Record<string, string>>((accumulator, snapshot) => {
-    (Object.entries(snapshot.alerts) as [CategoryId, RegionSnapshot['alerts'][CategoryId]][]).forEach(([category, alert]) => {
-      if (alert.riskLevel === 'high') {
-        accumulator[`${snapshot.region.id}:${category}`] = alert.summary;
-      }
-    });
-
     return accumulator;
   }, {});
 }
 
-export async function cacheOfflineAlertPayload(
-  snapshots: Record<string, RegionSnapshot>,
-  rawAlertDetails: AlertDetail[],
-  mapLocationAlerts: AlertDetail[],
-) {
-  const payload = {
-    cachedAt: new Date().toISOString(),
-    regions: buildOfflineRegionCache(snapshots),
-    rawAlertDetails: rawAlertDetails.filter((alert) => alert.category !== 'water'),
-    mapLocationAlerts: mapLocationAlerts.filter((alert) => alert.category === 'water'),
-  } satisfies OfflineAlertCache;
-
-  try {
-    await AsyncStorage.setItem(STORAGE_KEYS.offlineAlertCache, JSON.stringify(payload));
-  } catch {
-
-  }
+/**
+ * Remembers which broad region the user is following so the background check only
+ * notifies about their own area. Only the region id is stored - never coordinates.
+ */
+export async function setNotificationRegion(regionId: RegionId) {
+  await AsyncStorage.setItem(STORAGE_KEYS.notificationRegion, regionId).catch(() => undefined);
 }
 
-export async function primeOfflineLocationMonitor(userCoordinates: UserCoordinates | null) {
-  if (!userCoordinates) {
-    return;
-  }
-
-  await evaluateOfflineAlertCacheForLocation(userCoordinates, false).catch(() => undefined);
-}
-
-TaskManager.defineTask(BACKGROUND_TASK_NAME, async () => {
+async function runBackgroundCheck(modules: NativeModules) {
+  const { BackgroundFetch, Notifications } = modules;
   try {
-    const { snapshots, alertDetails, mapLocationAlerts } = await refreshAllRegionData();
-    await cacheOfflineAlertPayload(snapshots, alertDetails, mapLocationAlerts);
+    const storedRegion = (await AsyncStorage.getItem(STORAGE_KEYS.notificationRegion)) as RegionId | null;
+    const regionId = storedRegion ?? 'winnipeg';
+    const { snapshots } = await refreshAllRegionData(null, null, regionId);
+    const snapshot = snapshots[regionId];
+    if (!snapshot) {
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
 
-    const nextHighRiskState = getHighRiskState(snapshots);
+    const nextHighRiskState = getHighRiskState(snapshot);
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.notifications);
-    const previousHighRiskState = raw ? (JSON.parse(raw) as Record<string, string>) : {};
+    const previous = raw ? (JSON.parse(raw) as { regionId?: string; state?: Record<string, string> }) : {};
+    const previousState = previous.regionId === regionId ? previous.state ?? {} : {};
+    const newlyHigh = Object.entries(nextHighRiskState).filter(([category]) => !previousState[category]);
 
-    const newlyHigh = Object.entries(nextHighRiskState).filter(([key]) => !previousHighRiskState[key]);
-    await AsyncStorage.setItem(STORAGE_KEYS.notifications, JSON.stringify(nextHighRiskState));
+    await AsyncStorage.setItem(STORAGE_KEYS.notifications, JSON.stringify({ regionId, state: nextHighRiskState }));
 
+    const regionLabel = getRegionById(regionId).label;
     await Promise.all(
-      newlyHigh.map(async ([key, summary]) => {
-        const category = key.split(':')[1];
-        await Notifications.scheduleNotificationAsync({
+      newlyHigh.map(([category, summary]) =>
+        Notifications.scheduleNotificationAsync({
           content: {
-            title: `Alert: ${STRINGS.notificationTitle}`,
-            body: `${category} risk is now HIGH. ${summary}`,
+            title: `${CATEGORY_META[category as CategoryId]?.label ?? 'Outdoor'} risk is high in ${regionLabel}`,
+            body: `${summary} Open MOSI and check official sources before heading out.`,
           },
-          trigger: null,
-        });
-      }),
+          trigger: Platform.OS === 'android' ? { channelId: ANDROID_CHANNEL_ID } : null,
+        }),
+      ),
     );
 
-    return BackgroundFetch.BackgroundFetchResult.NewData;
+    return newlyHigh.length
+      ? BackgroundFetch.BackgroundFetchResult.NewData
+      : BackgroundFetch.BackgroundFetchResult.NoData;
   } catch {
     return BackgroundFetch.BackgroundFetchResult.Failed;
   }
-});
+}
 
-TaskManager.defineTask(BACKGROUND_LOCATION_TASK_NAME, async ({ data, error }) => {
-  if (error) {
-    return;
+// Background tasks must be defined when the JS bundle loads, so this runs at import time
+// in real builds (and is skipped entirely in Expo Go).
+(() => {
+  const modules = getNativeModules();
+  if (!modules) return;
+
+  modules.Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+  modules.TaskManager.defineTask(BACKGROUND_TASK_NAME, () => runBackgroundCheck(modules));
+})();
+
+export async function getNotificationPermissionGranted() {
+  const modules = getNativeModules();
+  if (!modules) return false;
+  const permissions = await modules.Notifications.getPermissionsAsync().catch(() => null);
+  return permissions?.status === 'granted';
+}
+
+/**
+ * Asks for notification permission (only ever called from an explicit user action)
+ * and schedules the periodic background check. Returns whether alerts are active.
+ */
+export async function enableRiskNotifications() {
+  const modules = getNativeModules();
+  if (!modules) return false;
+  const { BackgroundFetch, Notifications, TaskManager } = modules;
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+      name: 'High-risk alerts',
+      description: 'Sent when a category in your area turns high risk.',
+      importance: Notifications.AndroidImportance.HIGH,
+    }).catch(() => undefined);
   }
 
-  const locations = ((data as { locations?: Location.LocationObject[] } | undefined)?.locations ?? []).filter(
-    (location): location is Location.LocationObject => Boolean(location?.coords),
-  );
-  const latest = locations[locations.length - 1];
-
-  if (!latest?.coords) {
-    return;
-  }
-
-  await evaluateOfflineAlertCacheForLocation(
-    {
-      latitude: latest.coords.latitude,
-      longitude: latest.coords.longitude,
-      accuracy: latest.coords.accuracy,
-      timestamp: new Date(latest.timestamp).toISOString(),
-    },
-    true,
-  ).catch(() => undefined);
-});
-
-export async function registerNotifications() {
-  const permissions = await Notifications.getPermissionsAsync();
-  let status = permissions.status;
-
+  let { status } = await Notifications.getPermissionsAsync();
   if (status !== 'granted') {
-    const request = await Notifications.requestPermissionsAsync();
-    status = request.status;
+    status = (await Notifications.requestPermissionsAsync()).status;
+  }
+  if (status !== 'granted') {
+    return false;
   }
 
-  if (status === 'granted' && Platform.OS !== 'web') {
-    await Notifications.getExpoPushTokenAsync().catch(() => undefined);
-  }
-
-  await syncOfflineLocationMonitoring(status === 'granted');
-
-  const existing = await TaskManager.isTaskRegisteredAsync(BACKGROUND_TASK_NAME);
-  if (!existing) {
+  const registered = await TaskManager.isTaskRegisteredAsync(BACKGROUND_TASK_NAME).catch(() => false);
+  if (!registered) {
     await BackgroundFetch.registerTaskAsync(BACKGROUND_TASK_NAME, {
       minimumInterval: BACKGROUND_REFRESH_SECONDS,
       stopOnTerminate: false,
       startOnBoot: true,
-    });
+    }).catch(() => undefined);
   }
+  return true;
+}
+
+export async function disableRiskNotifications() {
+  const modules = getNativeModules();
+  if (modules) {
+    const registered = await modules.TaskManager.isTaskRegisteredAsync(BACKGROUND_TASK_NAME).catch(() => false);
+    if (registered) {
+      await modules.BackgroundFetch.unregisterTaskAsync(BACKGROUND_TASK_NAME).catch(() => undefined);
+    }
+  }
+  await AsyncStorage.removeItem(STORAGE_KEYS.notifications).catch(() => undefined);
 }
