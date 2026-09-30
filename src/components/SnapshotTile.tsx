@@ -51,17 +51,14 @@ export function getCategoryStat(category: CategoryId, alert: CategoryAlert): str
       return 'Seasonal model';
     }
     case 'water': {
-      if (alert.riskLevel === 'low') {
-        return '0 advisories';
-      }
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        return value === 0 ? '0 advisories' : `${Math.round(value)} nearby`;
-      }
-      if (typeof value === 'string' && value !== 'n/a') {
-        const parsed = parseInt(value, 10);
-        if (Number.isFinite(parsed)) return parsed === 0 ? '0 advisories' : `${parsed} nearby`;
-      }
-      return '0 advisories';
+      // Show the real count even when the rating is low (e.g. one site-specific advisory),
+      // so the headline never contradicts the summary underneath it.
+      const count =
+        typeof value === 'number' && Number.isFinite(value)
+          ? Math.round(value)
+          : Number.parseInt(String(value), 10) || Number(/(\d+)\s+(?:public|site)/i.exec(alert.summary)?.[1] ?? 0);
+      if (count > 0) return `${count} ${count === 1 ? 'advisory' : 'advisories'} nearby`;
+      return 'No advisories';
     }
     case 'vectorBorne': {
       if (alert.riskLevel === 'high') return 'Active season';
