@@ -246,8 +246,8 @@ export function OverviewScreen() {
           </View>
 
           <Text style={{ ...ty.caption, color: c.textSoft, textAlign: 'center', paddingHorizontal: sp.md }}>
-            Built from public data by ECCC, the Province of Manitoba and others. MOSI is not an official alert
-            service. In an emergency, call 911.
+            MOSI is not a government app. Every source is listed with a link in Settings → Data sources. In an
+            emergency, call 911.
           </Text>
         </Animated.View>
       )}
