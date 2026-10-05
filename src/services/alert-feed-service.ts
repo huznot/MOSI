@@ -1,4 +1,4 @@
-﻿import { ALERT_PROXIMITY_KM, CATEGORY_META } from '../constants/config';
+import { ALERT_PROXIMITY_KM, CATEGORY_META } from '../constants/config';
 import { AlertDetail, CategoryAlert, CategoryId, LocationSource, RegionSnapshot, UserCoordinates } from '../types/alerts';
 import { getDistanceKm } from './locationService';
 import { waterAreaContainsPoint } from './waterAdvisoryService';
@@ -49,7 +49,7 @@ function buildRecommendations(category: CategoryId) {
   }
   if (category === 'vectorBorne') {
     return [
-      'Apply Health Canada-approved insect repellent containing DEET or Icaridin to exposed skin.',
+      'Apply an insect repellent containing DEET or icaridin to exposed skin.',
       'Wear light-coloured long sleeves and pants when in tall grass, bush, or forest edges.',
       'Perform a thorough tick check within 2 hours of returning indoors. Pay special attention to the scalp, groin, and armpits.',
       'If you find an attached tick, remove it promptly with fine-tipped tweezers and monitor for rash or fever.',

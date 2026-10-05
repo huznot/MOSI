@@ -24,8 +24,8 @@ export const STRINGS = {
   locationDenied: 'Location denied, using a manually selected region.',
   weatherSource: 'Environment and Climate Change Canada',
   wildfireSource: 'Canadian Wildland Fire Information System',
-  waterSource: 'Province of Manitoba drinking water advisories',
-  vectorSource: 'MOSI vector activity and risk model',
-  healthSource: 'Province of Manitoba public health pages',
+  waterSource: 'Province of Manitoba',
+  vectorSource: 'MOSI estimate (not an official forecast)',
+  healthSource: 'Manitoba Health',
   notificationTitle: 'MOSI alert',
 } as const;

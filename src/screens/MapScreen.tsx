@@ -653,7 +653,7 @@ function MbReadyDetailCard({
       ) : null}
 
       <Text selectable style={{ ...theme.typography.caption, color: theme.colors.textMuted, fontSize: 11 }}>
-        MB Ready / NAAD Emergency Alert System
+        Alert Ready (National Public Alerting System)
       </Text>
     </Animated.View>
   );
@@ -1870,7 +1870,7 @@ export function MapScreen() {
                 },
                 mbReadyAlerts.length > 0 ? {
                   key: 'mbready',
-                  label: 'MB Ready alerts',
+                  label: 'Emergency alerts (Alert Ready)',
                   dot: MB_READY_HIGH_MARKER,
                   icon: 'alert-circle' as const,
                   on: showMbReady,

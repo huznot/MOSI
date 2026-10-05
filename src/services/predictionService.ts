@@ -1,4 +1,4 @@
-﻿import { CATEGORY_META, MANITOBA_POPULATION_CENTERS, PREDICTION_CACHE_TTL_MS, STORAGE_KEYS } from '../constants/config';
+import { CATEGORY_META, MANITOBA_POPULATION_CENTERS, PREDICTION_CACHE_TTL_MS, STORAGE_KEYS } from '../constants/config';
 import {
   CategoryId,
   CategoryPrediction,
@@ -590,12 +590,12 @@ function buildPredictionDayDetails(
           detail: `AQHI trend is anchored to the current live reading (${snapshot.alerts.airQuality.value ?? 'N/A'}) and adjusted using forecast wind and precipitation. This is a directional trend estimate, not an official AQHI forecast.`,
         },
         {
-          title: 'Wildfire FWI-proxy',
-          detail: `Simplified Van Wagner (1987) Fire Weather Index components: FFMC proxy from temperature, humidity, and wind; DMC proxy from consecutive dry-day streak (${row.precipMm < 2 ? 'ongoing' : 'reset today'}); proximity boost from live CWFIS fire data; winter suppression when conditions stay frozen or snowy; and built-area suppression around ${wildfireExposureContext.nearestPopulationLabel} when the target sits in a dense urban catchment.`,
+          title: 'Wildfire estimate (MOSI model)',
+          detail: `MOSI's own estimate, not an official fire danger rating. It uses FFMC proxy from temperature, humidity, and wind; DMC proxy from consecutive dry-day streak (${row.precipMm < 2 ? 'ongoing' : 'reset today'}); proximity boost from live CWFIS fire data; winter suppression when conditions stay frozen or snowy; and built-area suppression around ${wildfireExposureContext.nearestPopulationLabel} when the target sits in a dense urban catchment.`,
         },
         {
-          title: 'Vector-borne model (PHAC + Ixodes questing)',
-          detail: `This outlook blends the PHAC West Nile seasonal curve with a separate Ixodes questing model that is strongest in cool spring conditions, weaker in hot late summer, and returns as a smaller fall shoulder. It reflects likely vector pressure rather than a site-specific disease prediction. Average temperature ${Math.round((row.highC + row.lowC) / 2)} C suggests ${vectorScoreToRiskLevel(categoryScores.vectorBorne)} pressure.`,
+          title: 'Tick and mosquito estimate (MOSI model)',
+          detail: `This is MOSI's own estimate, not an official forecast. It blends a seasonal mosquito curve with a separate tick activity model that is strongest in cool spring conditions, weaker in hot late summer, and returns as a smaller fall shoulder. It reflects likely vector pressure rather than a site-specific disease prediction. Average temperature ${Math.round((row.highC + row.lowC) / 2)} C suggests ${vectorScoreToRiskLevel(categoryScores.vectorBorne)} pressure.`,
         },
         {
           title: 'Reactive-only signals',
@@ -677,13 +677,13 @@ function buildPredictionBundle(target: PredictionTarget, snapshot: RegionSnapsho
     ),
     wildfire: buildForecastPrediction(
       'wildfire',
-      'FWI-proxy (Van Wagner 1987 simplified): FFMC, DMC, live fire proximity, cold-season suppression, and urban built-area suppression.',
+      'MOSI estimate (not an official fire danger rating): temperature, humidity, wind, dry days and nearby CWFIS fires.',
       wildfireValues,
     ),
     water: buildLivePrediction('water', snapshot),
     vectorBorne: buildForecastPrediction(
       'vectorBorne',
-      'Seasonal mosquito and tick outlook based on Manitoba surveillance patterns and forecast weather conditions.',
+      'MOSI estimate (not an official forecast) of mosquito and tick activity from the season and forecast temperatures.',
       vectorValues,
       vectorScoreToRiskLevel,
     ),
