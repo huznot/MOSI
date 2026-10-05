@@ -82,6 +82,13 @@
         "projectId": "4221a036-a067-45ae-9907-827fe29dd70e"
       }
     },
-    "owner": "huznot"
+    "owner": "huznot",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/4221a036-a067-45ae-9907-827fe29dd70e",
+      "fallbackToCacheTimeout": 0
+    }
   }
 }
